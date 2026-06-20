@@ -1,0 +1,1715 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { AiCreditsUsageDto, BatchResult, ImportEmuPlanDto, ImportEmuUserRow, ImportEmuUserStatus, ImportGithubTokenRow, LoginTaskDto, LoginTaskStatus, ProxyAccountDto, ProxyRequestStatDto, SsoType, SsoUserBatchOperation, SsoUserBatchRow, SsoUserDto } from '@ghcp/shared';
+import { api } from './api/client.js';
+import { cancelLoginTask, deleteLoginTask, listLoginTasks, listLoginTasksPage, retryLoginTask } from './api/login.js';
+import { importGithubTokens, listProxyAccounts, listRequestStats, refreshCopilotToken, refreshGithubToken } from './api/proxy.js';
+import {
+  createSsoUser,
+  applyEmuImportPlan,
+  createEmuImportPlan,
+  deleteEmuImportPlan,
+  importSsoUsers,
+  listEmuImportPlanRows,
+  listSsoUsers,
+  patchSsoUser,
+  readAiCreditsUsage,
+  refreshAiCreditsUsage,
+  runSsoUserBatch,
+} from './api/sso.js';
+import { Badge } from './components/ui/badge.js';
+import { Button } from './components/ui/button.js';
+import { Card, CardDescription, CardTitle } from './components/ui/card.js';
+import { Dialog } from './components/ui/dialog.js';
+import { Input } from './components/ui/input.js';
+import { Textarea } from './components/ui/textarea.js';
+import { formatDate, formatNumber, statusTone, tokenTotal } from './lib/format.js';
+
+interface SetupState {
+  initialized: boolean;
+}
+
+type Page = 'dashboard' | 'users' | 'budgets' | 'stats' | 'accounts' | 'tasks' | 'diagnostics';
+type Notify = (message: string, tone?: 'success' | 'error') => void;
+const EMU_IMPORT_ROW_PAGE_SIZE = 100;
+const EMU_IMPORT_ROW_STATUSES: (ImportEmuUserStatus | '')[] = ['', 'pending_create', 'pending_update', 'created', 'updated', 'skipped', 'conflict', 'failed'];
+const LOGIN_TASK_STATUSES: (LoginTaskStatus | '')[] = ['', 'pending', 'running', 'success', 'failed', 'cancelled'];
+
+const pages: { id: Page; label: string; description: string }[] = [
+  { id: 'dashboard', label: 'Dashboard', description: 'Health, failures, and top operational signals.' },
+  { id: 'users', label: 'SSO Users', description: 'Create, import, sync, suspend, and manage SSO accounts.' },
+  { id: 'budgets', label: 'AI Credits Usage', description: 'Review enterprise AI Credits consumption and Copilot seat cost.' },
+  { id: 'stats', label: 'Request Stats', description: 'Review request failures and input/output/cache token usage.' },
+  { id: 'accounts', label: 'Proxy Accounts', description: 'Inspect identity mappings and refresh GitHub or Copilot tokens.' },
+  { id: 'tasks', label: 'Login Tasks', description: 'Monitor automatic login and GitHub-token refresh tasks.' },
+  { id: 'diagnostics', label: 'Diagnostics', description: 'Check console-to-service API connectivity.' },
+];
+
+export function App() {
+  const [initialized, setInitialized] = useState<boolean | undefined>();
+  const [authed, setAuthed] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    void api<SetupState>('/api/console/setup')
+      .then((state) => setInitialized(state.initialized))
+      .catch((err: Error) => setError(err.message));
+    void api('/api/console/me').then(() => setAuthed(true)).catch(() => undefined);
+  }, []);
+
+  if (initialized === undefined) return <AuthShell error={error}>Loading console...</AuthShell>;
+  if (!initialized) return <AuthForm mode="setup" onDone={() => { setInitialized(true); setAuthed(true); }} />;
+  if (!authed) return <AuthForm mode="login" onDone={() => setAuthed(true)} />;
+  return <AdminApp onLogout={() => setAuthed(false)} />;
+}
+
+function AuthForm(props: { mode: 'setup' | 'login'; onDone: () => void }) {
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setError(undefined);
+    setSaving(true);
+    try {
+      await api(`/api/console/${props.mode}`, { method: 'POST', body: JSON.stringify({ username, password }) });
+      props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <AuthShell error={error}>
+      <Card className="mx-auto mt-20 max-w-md">
+        <CardTitle>{props.mode === 'setup' ? 'Initialize Console' : 'Admin Login'}</CardTitle>
+        <CardDescription>Sign in before accessing service operations and token controls.</CardDescription>
+        <div className="flex flex-col gap-3">
+          <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
+          <Input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" />
+          <Button onClick={submit} disabled={saving}>{saving ? 'Working...' : props.mode === 'setup' ? 'Create admin' : 'Sign in'}</Button>
+        </div>
+      </Card>
+    </AuthShell>
+  );
+}
+
+function AuthShell(props: { children: ReactNode; error?: string }) {
+  return (
+    <main className="min-h-screen bg-slate-50 p-6">
+      <header className="mx-auto max-w-6xl">
+        <h1 className="text-3xl font-bold text-slate-950">GHCP Production Console</h1>
+        <p className="text-sm text-slate-600">Accounts, SSO users, AI Credits usage, request stats, and login operations.</p>
+      </header>
+      {props.error ? <p className="mx-auto mt-4 max-w-6xl rounded bg-red-50 p-3 text-sm text-red-700">{props.error}</p> : null}
+      {props.children}
+    </main>
+  );
+}
+
+function AdminApp(props: { onLogout: () => void }) {
+  const [page, setPage] = useState<Page>(() => readPageFromHash());
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' }>();
+
+  useEffect(() => {
+    const onHash = () => setPage(readPageFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  const notify: Notify = (message, tone = 'success') => {
+    setToast({ message, tone });
+    window.setTimeout(() => setToast(undefined), 4000);
+  };
+
+  const navigate = (next: Page) => {
+    window.location.hash = next;
+    setPage(next);
+  };
+
+  const current = pages.find((entry) => entry.id === page) ?? pages[0]!;
+  return (
+    <div className="min-h-screen bg-slate-100">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-slate-200 bg-white p-4 lg:block">
+        <h1 className="text-xl font-bold text-slate-950">GHCP API Console</h1>
+        <p className="mt-1 text-xs text-slate-500">provided by openfuture</p>
+        <nav className="mt-6 flex flex-col gap-1">
+          {pages.map((entry) => (
+            <button
+              key={entry.id}
+              className={`rounded-md px-3 py-2 text-left text-sm font-medium ${entry.id === page ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'}`}
+              onClick={() => navigate(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <div className="lg:pl-64">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-6 py-4 backdrop-blur">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-semibold text-slate-950">{current.label}</h2>
+                <Badge tone="info">local</Badge>
+              </div>
+              <p className="text-sm text-slate-600">{current.description}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm lg:hidden" value={page} onChange={(event) => navigate(event.target.value as Page)}>
+                {pages.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+              </select>
+              <Button variant="secondary" onClick={async () => { await api('/api/console/logout', { method: 'POST' }); props.onLogout(); }}>Logout</Button>
+            </div>
+          </div>
+        </header>
+        <main className="p-6">
+          {page === 'dashboard' ? <DashboardPage notify={notify} /> : null}
+          {page === 'users' ? <UsersPage notify={notify} /> : null}
+          {page === 'budgets' ? <AiCreditsUsagePage notify={notify} /> : null}
+          {page === 'stats' ? <RequestStatsPage /> : null}
+          {page === 'accounts' ? <ProxyAccountsPage notify={notify} /> : null}
+          {page === 'tasks' ? <LoginTasksPage notify={notify} /> : null}
+          {page === 'diagnostics' ? <DiagnosticsPage /> : null}
+        </main>
+      </div>
+      {toast ? (
+        <div className={`fixed bottom-4 right-4 z-50 rounded-lg px-4 py-3 text-sm shadow-lg ${toast.tone === 'success' ? 'bg-slate-950 text-white' : 'bg-red-600 text-white'}`}>
+          {toast.message}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DashboardPage(_props: { notify: Notify }) {
+  const [accounts, setAccounts] = useState<ProxyAccountDto[]>([]);
+  const [users, setUsers] = useState<SsoUserDto[]>([]);
+  const [tasks, setTasks] = useState<LoginTaskDto[]>([]);
+  const [stats, setStats] = useState<ProxyRequestStatDto[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    void Promise.allSettled([
+      listProxyAccounts({ pageSize: 100 }),
+      listSsoUsers({ pageSize: 100 }),
+      listLoginTasks(20),
+      listRequestStats({ limit: 100 }),
+    ]).then(([accountResult, userResult, taskResult, statResult]) => {
+      if (!mounted) return;
+      const nextErrors: Record<string, string> = {};
+      if (accountResult.status === 'fulfilled') setAccounts(accountResult.value.items);
+      else nextErrors.accounts = accountResult.reason instanceof Error ? accountResult.reason.message : String(accountResult.reason);
+      if (userResult.status === 'fulfilled') setUsers(userResult.value.items);
+      else nextErrors.users = userResult.reason instanceof Error ? userResult.reason.message : String(userResult.reason);
+      if (taskResult.status === 'fulfilled') setTasks(taskResult.value);
+      else nextErrors.tasks = taskResult.reason instanceof Error ? taskResult.reason.message : String(taskResult.reason);
+      if (statResult.status === 'fulfilled') setStats(statResult.value);
+      else nextErrors.stats = statResult.reason instanceof Error ? statResult.reason.message : String(statResult.reason);
+      setErrors(nextErrors);
+      setLoading(false);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const failedTasks = tasks.filter((task) => task.status === 'failed').slice(0, 5);
+  const failedStats = stats.filter((stat) => !stat.success).slice(0, 5);
+  const totals = stats.reduce((sum, stat) => ({
+    input: sum.input + (stat.inputTokens ?? 0),
+    output: sum.output + (stat.outputTokens ?? 0),
+    cache: sum.cache + (statCacheTokens(stat) ?? 0),
+    cacheInput: sum.cacheInput + (stat.cacheInputTokens ?? 0),
+    cacheWrite: sum.cacheWrite + (stat.cacheWriteTokens ?? 0),
+  }), { input: 0, output: 0, cache: 0, cacheInput: 0, cacheWrite: 0 });
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="Proxy accounts" value={accounts.length} detail={countBy(accounts, 'ghTokenStatus')} error={errors.accounts} />
+        <MetricCard title="SSO users" value={users.length} detail={countBy(users, 'emuStatus')} error={errors.users} />
+        <MetricCard title="Login failures" value={failedTasks.length} detail={`${tasks.length} recent task(s)`} error={errors.tasks} />
+        <MetricCard title="Recent tokens" value={formatNumber(totals.input + totals.output + totals.cache)} detail={`in ${formatNumber(totals.input)} / out ${formatNumber(totals.output)} / cache ${formatNumber(totals.cache)} (input ${formatNumber(totals.cacheInput)} / write ${formatNumber(totals.cacheWrite)})`} error={errors.stats} />
+      </div>
+      {loading ? <LoadingState label="Loading dashboard..." /> : null}
+      <div className="grid gap-4">
+        <Card className="min-w-0">
+          <CardTitle>Recent failed login tasks</CardTitle>
+          <LoginTasksTable tasks={failedTasks} compact />
+        </Card>
+        <Card className="min-w-0">
+          <CardTitle>Recent failed proxy requests</CardTitle>
+          <RequestStatsTable stats={failedStats} compact />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function UsersPage(props: { notify: Notify }) {
+  const [users, setUsers] = useState<SsoUserDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [emuImportOpen, setEmuImportOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [editing, setEditing] = useState<SsoUserDto>();
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkAction, setBulkAction] = useState<string>();
+  const [batchResult, setBatchResult] = useState<UserBatchActionResult>();
+  const allCurrentPageSelected = users.length > 0 && users.every((user) => selected.has(user.ssoUser));
+
+  const load = async (nextPage = page) => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const result = await listSsoUsers({ q, page: nextPage, pageSize: 25, sort: 'ssoUser', dir: 'asc' });
+      setUsers(result.items);
+      setTotal(result.total);
+      setPage(result.page);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(1);
+  }, []);
+
+  const setUserSelected = (ssoUser: string, checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(ssoUser);
+      else next.delete(ssoUser);
+      return next;
+    });
+  };
+
+  const setCurrentPageSelected = (checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const user of users) {
+        if (checked) next.add(user.ssoUser);
+        else next.delete(user.ssoUser);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const runBulkUserAction = async (
+    operation: SsoUserBatchOperation,
+    label: string,
+    confirmMessage?: (count: number) => string,
+  ) => {
+    const ssoUsers = [...selected];
+    if (ssoUsers.length === 0) return;
+    if (confirmMessage && !window.confirm(confirmMessage(ssoUsers.length))) return;
+    setBulkAction(label);
+    try {
+      const result = await runSsoUserBatch({ operation, ssoUsers });
+      const failed = result.rows.filter((row) => row.status === 'failed');
+      setBatchResult({ title: label, result });
+      setSelected(new Set(failed.map((row) => row.ssoUser)));
+      props.notify(`${label}: ${result.summary.success} succeeded, ${result.summary.failed} failed.`, result.summary.failed > 0 ? 'error' : 'success');
+      await load();
+    } catch (err) {
+      props.notify((err as Error).message, 'error');
+    } finally {
+      setBulkAction(undefined);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-1 gap-2">
+            <Input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search SSO user, email, or GH login" className="max-w-md flex-1" />
+            <Button variant="secondary" onClick={() => { clearSelection(); void load(1); }}>Search</Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setBatchOpen(true)}>Batch create</Button>
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>Import CSV</Button>
+            <Button variant="secondary" onClick={() => setEmuImportOpen(true)}>Import from GH</Button>
+            <Button onClick={() => setCreateOpen(true)}>Create user</Button>
+          </div>
+        </div>
+      </Card>
+      <BulkUserActionBar
+        count={selected.size}
+        busy={bulkAction}
+        onSync={() => runBulkUserAction('sync_emu', 'Sync GH login')}
+        onAssignCopilot={() => runBulkUserAction('assign_copilot', 'Assign Copilot seat')}
+        onRemoveCopilot={() => runBulkUserAction('remove_copilot', 'Remove Copilot seat', (count) => `Remove Copilot seat(s) for ${count} selected user(s)?`)}
+        onSuspend={() => runBulkUserAction('suspend_emu', 'Suspend GH login', (count) => `Suspend ${count} selected GH login(s)?`)}
+        onDeleteEmu={() => runBulkUserAction('delete_emu', 'Delete GH login data', (count) => `Delete provisioned GH login data for ${count} selected user(s)? Copilot seats will be removed first.`)}
+        onDeleteSso={() => runBulkUserAction('delete_sso', 'Delete SSO users', (count) => `Delete ${count} selected local SSO user(s)? Copilot seats and provisioned GH login data will be deleted first when present.`)}
+        onClear={clearSelection}
+      />
+      {error ? <ErrorState message={error} /> : null}
+      {loading ? <LoadingState label="Loading users..." /> : null}
+      <Card className="overflow-hidden p-0">
+        <Table>
+          <thead>
+            <tr>
+              <Th><input type="checkbox" checked={allCurrentPageSelected} onChange={(event) => setCurrentPageSelected(event.target.checked)} aria-label="Select all users on current page" /></Th>
+              <Th>SSO user</Th>
+              <Th>Email</Th>
+              <Th>Role</Th>
+              <Th>GH login</Th>
+              <Th>Status</Th>
+              <Th>Copilot seat</Th>
+              <Th>Updated</Th>
+              <Th>Actions</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((user) => (
+              <tr key={user.ssoUser}>
+                <Td><input type="checkbox" checked={selected.has(user.ssoUser)} onChange={(event) => setUserSelected(user.ssoUser, event.target.checked)} aria-label={`Select ${user.ssoUser}`} /></Td>
+                <Td className="font-medium">{user.ssoUser}</Td>
+                <Td>{user.email}</Td>
+                <Td><Badge tone={user.role === 'admin' ? 'info' : 'default'}>{user.role}</Badge></Td>
+                <Td>{user.ghLogin ?? '-'}</Td>
+                <Td><Badge tone={statusTone(user.emuStatus)}>{user.emuStatus}</Badge></Td>
+                <Td><CopilotSeatCell user={user} /></Td>
+                <Td>{formatDate(user.updatedAt)}</Td>
+                <Td>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => setEditing(user)}>Edit</Button>
+                  </div>
+                </Td>
+              </tr>
+            ))}
+            {users.length === 0 ? <EmptyRow colSpan={9} label="No SSO users found." /> : null}
+          </tbody>
+        </Table>
+      </Card>
+      <Pagination page={page} total={total} pageSize={25} onPage={(next) => { clearSelection(); void load(next); }} />
+      <CreateUserDialog open={createOpen} onClose={() => setCreateOpen(false)} onDone={async () => { setCreateOpen(false); await load(1); props.notify('SSO user created.'); }} />
+      <ImportUsersDialog open={importOpen} onClose={() => setImportOpen(false)} onDone={async () => { await load(1); props.notify('Import completed.'); }} />
+      <ImportEmuUsersDialog open={emuImportOpen} onClose={() => setEmuImportOpen(false)} onDone={async () => { await load(1); props.notify('GH import completed.'); }} />
+      <BatchCreateDialog open={batchOpen} onClose={() => setBatchOpen(false)} onDone={async () => { setBatchOpen(false); await load(1); props.notify('Batch create completed.'); }} />
+      <EditUserDialog user={editing} onClose={() => setEditing(undefined)} onDone={async () => { setEditing(undefined); await load(); props.notify('SSO user updated.'); }} />
+      <UserBatchActionResultDialog result={batchResult} onClose={() => setBatchResult(undefined)} />
+    </div>
+  );
+}
+
+interface UserBatchActionResult {
+  title: string;
+  result: BatchResult<SsoUserBatchRow>;
+}
+
+function BulkUserActionBar(props: {
+  count: number;
+  busy?: string;
+  onSync: () => void;
+  onAssignCopilot: () => void;
+  onRemoveCopilot: () => void;
+  onSuspend: () => void;
+  onDeleteEmu: () => void;
+  onDeleteSso: () => void;
+  onClear: () => void;
+}) {
+  const disabled = props.count === 0 || Boolean(props.busy);
+  return (
+    <Card className="border-blue-200 bg-blue-50">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <p className="text-sm font-medium text-blue-900">{props.count} selected</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={props.onSync} disabled={disabled}>{props.busy === 'Sync GH login' ? 'Syncing...' : 'Sync GH login'}</Button>
+          <Button variant="secondary" onClick={props.onAssignCopilot} disabled={disabled}>{props.busy === 'Assign Copilot seat' ? 'Assigning...' : 'Assign Copilot seat'}</Button>
+          <Button variant="secondary" onClick={props.onRemoveCopilot} disabled={disabled}>{props.busy === 'Remove Copilot seat' ? 'Removing...' : 'Remove Copilot seat'}</Button>
+          <Button variant="secondary" onClick={props.onSuspend} disabled={disabled}>{props.busy === 'Suspend GH login' ? 'Suspending...' : 'Suspend GH login'}</Button>
+          <Button variant="secondary" onClick={props.onDeleteEmu} disabled={disabled}>{props.busy === 'Delete GH login data' ? 'Deleting...' : 'Delete GH login'}</Button>
+          <Button variant="danger" onClick={props.onDeleteSso} disabled={disabled}>{props.busy === 'Delete SSO users' ? 'Deleting...' : 'Delete Users'}</Button>
+          <Button variant="ghost" onClick={props.onClear} disabled={Boolean(props.busy)}>Clear selection</Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function CopilotSeatCell(props: { user: SsoUserDto }) {
+  return (
+    <div className="flex max-w-xs flex-col gap-1">
+      <StatusWithDate status={props.user.copilotSeatStatus} date={props.user.copilotSeatUpdatedAt} />
+      {props.user.copilotSeatLastError ? (
+        <span className="truncate text-xs text-red-600" title={props.user.copilotSeatLastError}>{props.user.copilotSeatLastError}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function UserBatchActionResultDialog(props: { result?: UserBatchActionResult; onClose: () => void }) {
+  if (!props.result) return null;
+  const failed = props.result.result.summary.failed;
+  const success = props.result.result.summary.success;
+  return (
+    <Dialog title={props.result.title} description={`${success} succeeded, ${failed} failed.`} open={Boolean(props.result)} onClose={props.onClose}>
+      <ul className="max-h-80 overflow-auto rounded-md bg-slate-50 p-3 text-sm">
+        {props.result.result.rows.map((row) => (
+          <li key={`${row.ssoUser}-${row.status}`} className={row.status === 'failed' ? 'text-red-700' : 'text-slate-700'}>
+            {row.ssoUser} - {row.status} - {row.detail}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-5 flex justify-end">
+        <Button onClick={props.onClose}>Close</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+function AiCreditsUsagePage(props: { notify: Notify }) {
+  const [usage, setUsage] = useState<AiCreditsUsageDto>();
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+
+  const load = async (refresh = false) => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const next = refresh ? await refreshAiCreditsUsage() : await readAiCreditsUsage();
+      setUsage(next);
+      if (refresh) props.notify('AI Credits usage refreshed.');
+    } catch (err) {
+      if (!refresh) {
+        try {
+          const next = await refreshAiCreditsUsage();
+          setUsage(next);
+          return;
+        } catch (refreshErr) {
+          setError((refreshErr as Error).message);
+          return;
+        }
+      }
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(false);
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <CardTitle className="mb-1">AI Credits Usage</CardTitle>
+            <p className="text-sm text-slate-600">Enterprise-level Copilot AI Credits consumption from GitHub billing usage summary.</p>
+          </div>
+          <Button onClick={() => void load(true)} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh usage'}</Button>
+        </div>
+      </Card>
+      {loading ? <LoadingState label="Loading AI Credits usage..." /> : null}
+      {error ? <ErrorState message={error} /> : null}
+      {usage ? (
+        <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <MetricCard title={`${periodLabel(usage.lastMonth)} usage`} value={formatAiUnits(usage.lastMonth.quantity)} detail={usage.lastMonth.unitType ?? 'AI Credits'} />
+            <MetricCard title={`${periodLabel(usage.currentMonth)} usage`} value={formatAiUnits(usage.currentMonth.quantity)} detail={usage.currentMonth.unitType ?? 'AI Credits'} />
+            <MetricCard title="Projected this month" value={formatAiUnits(usage.projectedCurrentMonthQuantity)} detail="Based on daily average so far" />
+            <MetricCard title="Assigned seats" value={usage.assignedSeatCount} detail="Tracked in SSO Copilot seat status" />
+            <MetricCard title="Seat monthly cost" value={formatCurrency(usage.assignedSeatMonthlyCost)} detail={`${formatCurrency(usage.seatPricePerMonth)} x ${usage.assignedSeatCount} seat(s)`} />
+          </div>
+          <Card>
+            <div className="grid gap-3 text-sm md:grid-cols-3">
+              <Info label="Enterprise" value={usage.enterprise} />
+              <Info label="Last fetched" value={formatDate(usage.fetchedAt)} />
+              <Info label="Source" value="GitHub billing usage summary / copilot_ai_unit" />
+            </div>
+          </Card>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function RequestStatsPage() {
+  const [stats, setStats] = useState<ProxyRequestStatDto[]>([]);
+  const [identity, setIdentity] = useState('');
+  const [success, setSuccess] = useState('');
+  const [model, setModel] = useState('');
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      setStats(await listRequestStats({ limit: 1000 }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const filtered = useMemo(() => stats.filter((stat) => {
+    if (identity && !`${stat.identity} ${stat.ghLogin ?? ''}`.toLowerCase().includes(identity.toLowerCase())) return false;
+    if (success && String(stat.success) !== success) return false;
+    if (model && !(stat.model ?? '').toLowerCase().includes(model.toLowerCase())) return false;
+    return true;
+  }), [identity, model, stats, success]);
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="grid gap-3 md:grid-cols-4">
+          <Input value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="Identity or GH login" />
+          <Input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Model" />
+          <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={success} onChange={(event) => setSuccess(event.target.value)}>
+            <option value="">All outcomes</option>
+            <option value="true">Success</option>
+            <option value="false">Failed</option>
+          </select>
+          <Button variant="secondary" onClick={load}>Refresh</Button>
+        </div>
+      </Card>
+      {loading ? <LoadingState label="Loading request stats..." /> : null}
+      {error ? <ErrorState message={error} /> : null}
+      <Card className="overflow-hidden p-0">
+        <RequestStatsTable stats={filtered} />
+      </Card>
+    </div>
+  );
+}
+
+function ProxyAccountsPage(props: { notify: Notify }) {
+  const [accounts, setAccounts] = useState<ProxyAccountDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+  const [ghRefresh, setGhRefresh] = useState<ProxyAccountDto>();
+  const [detail, setDetail] = useState<ProxyAccountDto>();
+  const [importOpen, setImportOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkAction, setBulkAction] = useState<string>();
+  const allCurrentPageSelected = accounts.length > 0 && accounts.every((account) => selected.has(account.identity));
+  const selectedAccounts = accounts.filter((account) => selected.has(account.identity));
+  const singleSelected = selected.size === 1 ? selectedAccounts[0] : undefined;
+
+  const load = async (nextPage = page) => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const result = await listProxyAccounts({ q, page: nextPage, pageSize: 25, sort: 'updatedAt', dir: 'desc' });
+      setAccounts(result.items);
+      setTotal(result.total);
+      setPage(result.page);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const setAccountSelected = (identity: string, checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(identity);
+      else next.delete(identity);
+      return next;
+    });
+  };
+
+  const setCurrentPageSelected = (checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const account of accounts) {
+        if (checked) next.add(account.identity);
+        else next.delete(account.identity);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const runRefreshCopilot = async () => {
+    const identities = [...selected];
+    if (identities.length === 0) return;
+    setBulkAction('Refresh Copilot');
+    const failures: string[] = [];
+    try {
+      for (const identity of identities) {
+        try {
+          await refreshCopilotToken(identity);
+        } catch (err) {
+          failures.push(`${identity}: ${(err as Error).message}`);
+        }
+      }
+      props.notify(
+        `Copilot refresh: ${identities.length - failures.length} succeeded, ${failures.length} failed.${failures[0] ? ` ${failures[0]}` : ''}`,
+        failures.length > 0 ? 'error' : 'success',
+      );
+      await load();
+    } finally {
+      setBulkAction(undefined);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <CardTitle className="mb-1">Proxy accounts</CardTitle>
+            <p className="text-sm text-slate-600">Identity header mappings, token status, and manual recovery actions.</p>
+          </div>
+          <div className="flex flex-1 justify-end gap-2">
+            <Input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search identity, SSO user, or GH login" className="max-w-md flex-1" />
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>Import GH tokens</Button>
+            <Button variant="secondary" onClick={() => { clearSelection(); void load(1); }}>Search</Button>
+            <Button variant="secondary" onClick={() => void load()}>Refresh list</Button>
+          </div>
+        </div>
+      </Card>
+      <ProxyAccountActionBar
+        count={selected.size}
+        busy={bulkAction}
+        singleSelected={Boolean(singleSelected)}
+        onDetails={() => { if (singleSelected) setDetail(singleSelected); }}
+        onRefreshGithub={() => { if (singleSelected) setGhRefresh(singleSelected); }}
+        onRefreshCopilot={runRefreshCopilot}
+        onClear={clearSelection}
+      />
+      {loading ? <LoadingState label="Loading proxy accounts..." /> : null}
+      {error ? <ErrorState message={error} /> : null}
+      <Card className="overflow-hidden p-0">
+        <Table>
+          <thead>
+            <tr>
+              <Th><input type="checkbox" checked={allCurrentPageSelected} onChange={(event) => setCurrentPageSelected(event.target.checked)} aria-label="Select all proxy accounts on current page" /></Th>
+              <Th>Header identity</Th>
+              <Th>SSO user</Th>
+              <Th>GH login</Th>
+              <Th>GitHub token</Th>
+              <Th>Copilot token</Th>
+              <Th>Updated</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((account) => (
+              <tr key={account.identity}>
+                <Td><input type="checkbox" checked={selected.has(account.identity)} onChange={(event) => setAccountSelected(account.identity, event.target.checked)} aria-label={`Select ${account.identity}`} /></Td>
+                <Td className="font-medium">{account.identity}</Td>
+                <Td>{account.ssoUser}</Td>
+                <Td>{account.ghLogin ?? '-'}</Td>
+                <Td><StatusWithDate status={account.ghTokenStatus} date={account.ghTokenUpdatedAt} /></Td>
+                <Td><StatusWithDate status={account.copilotTokenStatus} date={account.copilotTokenExpiresAt ? `expires ${formatDate(account.copilotTokenExpiresAt)}` : undefined} /></Td>
+                <Td>{formatDate(account.updatedAt)}</Td>
+              </tr>
+            ))}
+            {accounts.length === 0 ? <EmptyRow colSpan={7} label="No proxy accounts found." /> : null}
+          </tbody>
+        </Table>
+      </Card>
+      <Pagination page={page} total={total} pageSize={25} onPage={(next) => { clearSelection(); void load(next); }} />
+      <GithubRefreshDialog account={ghRefresh} onClose={() => setGhRefresh(undefined)} onDone={async () => { setGhRefresh(undefined); props.notify('GitHub token refresh task requested.'); await load(); }} />
+      <ProxyAccountDetailDialog account={detail} onClose={() => setDetail(undefined)} />
+      <ImportGithubTokensDialog open={importOpen} onClose={() => setImportOpen(false)} onDone={async () => { await load(1); props.notify('GitHub token import completed.'); }} />
+    </div>
+  );
+}
+
+function ProxyAccountActionBar(props: {
+  count: number;
+  busy?: string;
+  singleSelected: boolean;
+  onDetails: () => void;
+  onRefreshGithub: () => void;
+  onRefreshCopilot: () => void;
+  onClear: () => void;
+}) {
+  const disabled = props.count === 0 || Boolean(props.busy);
+  const singleDisabled = !props.singleSelected || Boolean(props.busy);
+  return (
+    <Card className="border-blue-200 bg-blue-50">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <p className="text-sm font-medium text-blue-900">{props.count} selected</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={props.onDetails} disabled={singleDisabled}>Details</Button>
+          <Button variant="secondary" onClick={props.onRefreshGithub} disabled={singleDisabled}>Refresh GH</Button>
+          <Button onClick={props.onRefreshCopilot} disabled={disabled}>{props.busy === 'Refresh Copilot' ? 'Refreshing...' : 'Refresh Copilot'}</Button>
+          <Button variant="ghost" onClick={props.onClear} disabled={Boolean(props.busy)}>Clear selection</Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ImportGithubTokensDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+  const [csvText, setCsvText] = useState('name,githubToken\n');
+  const [result, setResult] = useState<BatchResult<ImportGithubTokenRow>>();
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      const importResult = await importGithubTokens(csvText);
+      setResult(importResult);
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title="Import GitHub tokens"
+      description="CSV format: name,githubToken. name must already exist in SSO Users. Imported tokens overwrite existing GitHub tokens and are never echoed back."
+      open={props.open}
+      onClose={props.onClose}
+    >
+      <div className="mb-3 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+        Create missing SSO users manually before importing. The token column is stored but never echoed back in results.
+      </div>
+      <Textarea value={csvText} onChange={(event) => setCsvText(event.target.value)} className="h-56 w-full font-mono" />
+      {result ? (
+        <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm">
+          <p className="font-medium">Batch {result.batchId}: {result.summary.success} success, {result.summary.failed} failed</p>
+          <ul className="mt-2 max-h-52 overflow-auto">
+            {result.rows.map((row) => (
+              <li key={`${row.line}-${row.name}`} className={row.status === 'failed' ? 'text-red-700' : 'text-slate-700'}>
+                Line {row.line}: {row.name || '-'} - {row.status} - {row.detail}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Import" />
+    </Dialog>
+  );
+}
+
+function LoginTasksPage(props: { notify: Notify }) {
+  const [tasks, setTasks] = useState<LoginTaskDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState<LoginTaskStatus | ''>('');
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState<LoginTaskDto>();
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  const load = async (nextPage = page) => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const result = await listLoginTasksPage({ q, status, page: nextPage, pageSize: 25 });
+      setTasks(result.items);
+      setTotal(result.total);
+      setPage(result.page);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const selectedTasks = tasks.filter((task) => selected.has(task.id));
+  const singleSelected = selectedTasks.length === 1 ? selectedTasks[0] : undefined;
+  const cancellableSelected = selectedTasks.filter((task) => !isTerminalLoginTask(task));
+  const deletableSelected = selectedTasks.filter(isDeletableLoginTask);
+  const hasNonDeletableSelected = selectedTasks.some((task) => !isDeletableLoginTask(task));
+  const allCurrentPageSelected = tasks.length > 0 && tasks.every((task) => selected.has(task.id));
+
+  const setTaskSelected = (id: string, checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const setFilteredSelected = (checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const task of tasks) {
+        if (checked) next.add(task.id);
+        else next.delete(task.id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const cancelSelected = async () => {
+    if (cancellableSelected.length === 0) return;
+    if (!window.confirm(`Cancel ${cancellableSelected.length} selected login task(s)?`)) return;
+    const failures: string[] = [];
+    try {
+      for (const task of cancellableSelected) {
+        try {
+          await cancelLoginTask(task.id);
+        } catch (err) {
+          failures.push(`${task.id}: ${(err as Error).message}`);
+        }
+      }
+      props.notify(
+        `Login task cancel: ${cancellableSelected.length - failures.length} succeeded, ${failures.length} failed.${failures[0] ? ` ${failures[0]}` : ''}`,
+        failures.length > 0 ? 'error' : 'success',
+      );
+      clearSelection();
+      await load();
+    } catch (err) {
+      props.notify((err as Error).message, 'error');
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (deletableSelected.length === 0 || hasNonDeletableSelected) return;
+    if (!window.confirm(`Delete ${deletableSelected.length} selected login task(s)? This cannot be undone.`)) return;
+    const failures: string[] = [];
+    for (const task of deletableSelected) {
+      try {
+        await deleteLoginTask(task.id);
+      } catch (err) {
+        failures.push(`${task.id}: ${(err as Error).message}`);
+      }
+    }
+    props.notify(
+      `Login task delete: ${deletableSelected.length - failures.length} succeeded, ${failures.length} failed.${failures[0] ? ` ${failures[0]}` : ''}`,
+      failures.length > 0 ? 'error' : 'success',
+    );
+    clearSelection();
+    await load(page);
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex items-center justify-between">
+        <div>
+          <CardTitle className="mb-1">Login tasks</CardTitle>
+          <p className="text-sm text-slate-600">Automatic GitHub device-flow and SSO login jobs.</p>
+        </div>
+        <div className="flex flex-1 justify-end gap-2">
+          <Input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search task, identity, SSO user, or GH login" className="max-w-md flex-1" />
+          <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value as LoginTaskStatus | '')}>
+            {LOGIN_TASK_STATUSES.map((item) => <option key={item || 'all'} value={item}>{item || 'All statuses'}</option>)}
+          </select>
+          <Button variant="secondary" onClick={() => { clearSelection(); void load(1); }}>Search</Button>
+          <Button variant="secondary" onClick={() => void load(page)}>Refresh</Button>
+        </div>
+      </Card>
+      <LoginTaskActionBar
+        count={selected.size}
+        cancellableCount={cancellableSelected.length}
+        deletableCount={deletableSelected.length}
+        deleteBlocked={hasNonDeletableSelected}
+        retryable={singleSelected?.status === 'failed'}
+        onCancel={cancelSelected}
+        onDelete={deleteSelected}
+        onRetry={() => { if (singleSelected?.status === 'failed') setRetrying(singleSelected); }}
+        onClear={clearSelection}
+      />
+      {loading ? <LoadingState label="Loading login tasks..." /> : null}
+      {error ? <ErrorState message={error} /> : null}
+      <Card className="overflow-hidden p-0">
+        <LoginTasksTable tasks={tasks} selected={selected} allSelected={allCurrentPageSelected} onSelect={setTaskSelected} onSelectAll={setFilteredSelected} />
+      </Card>
+      <Pagination page={page} total={total} pageSize={25} onPage={(next) => { clearSelection(); void load(next); }} />
+      <RetryTaskDialog task={retrying} onClose={() => setRetrying(undefined)} onDone={async () => { setRetrying(undefined); props.notify('Login task retry queued.'); await load(); }} />
+    </div>
+  );
+}
+
+function LoginTaskActionBar(props: {
+  count: number;
+  cancellableCount: number;
+  deletableCount: number;
+  deleteBlocked: boolean;
+  retryable: boolean;
+  onCancel: () => void;
+  onDelete: () => void;
+  onRetry: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <Card className="border-blue-200 bg-blue-50">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <p className="text-sm font-medium text-blue-900">
+          {props.count} selected
+          {props.deleteBlocked ? <span className="ml-2 font-normal text-blue-700">Pending/running tasks cannot be deleted.</span> : null}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={props.onCancel} disabled={props.cancellableCount === 0}>Cancel selected</Button>
+          <Button variant="secondary" onClick={props.onRetry} disabled={!props.retryable}>Retry failed task</Button>
+          <Button variant="danger" onClick={props.onDelete} disabled={props.deletableCount === 0 || props.deleteBlocked}>Delete selected</Button>
+          <Button variant="ghost" onClick={props.onClear} disabled={props.count === 0}>Clear selection</Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function isTerminalLoginTask(task: LoginTaskDto): boolean {
+  return task.status === 'success' || task.status === 'failed' || task.status === 'cancelled';
+}
+
+function isDeletableLoginTask(task: LoginTaskDto): boolean {
+  return task.status !== 'pending' && task.status !== 'running';
+}
+
+function DiagnosticsPage() {
+  const [results, setResults] = useState<{ name: string; ok: boolean; message: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const checks = [
+    { name: 'Proxy accounts', path: '/api/console/proxy/accounts' },
+    { name: 'SSO users', path: '/api/console/sso/users' },
+    { name: 'Login tasks', path: '/api/console/login-service/tasks' },
+    { name: 'Request stats', path: '/api/console/proxy/request-stats' },
+  ];
+
+  const run = async () => {
+    setLoading(true);
+    const next = await Promise.all(checks.map(async (check) => {
+      try {
+        await api(check.path);
+        return { name: check.name, ok: true, message: 'OK' };
+      } catch (err) {
+        return { name: check.name, ok: false, message: (err as Error).message };
+      }
+    }));
+    setResults(next);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void run();
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex items-center justify-between">
+        <div>
+          <CardTitle className="mb-1">Service connectivity</CardTitle>
+          <p className="text-sm text-slate-600">Confirms console proxy routes and internal service token alignment.</p>
+        </div>
+        <Button variant="secondary" onClick={run}>Run checks</Button>
+      </Card>
+      {loading ? <LoadingState label="Running diagnostics..." /> : null}
+      <div className="grid gap-4 md:grid-cols-2">
+        {results.map((result) => (
+          <Card key={result.name}>
+            <div className="flex items-center justify-between">
+              <CardTitle className="mb-0">{result.name}</CardTitle>
+              <Badge tone={result.ok ? 'success' : 'danger'}>{result.ok ? 'OK' : 'Failed'}</Badge>
+            </div>
+            <p className={`mt-3 text-sm ${result.ok ? 'text-slate-600' : 'text-red-600'}`}>{result.message}</p>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CreateUserDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+  const [ssoUser, setSsoUser] = useState('');
+  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<'user' | 'admin'>('user');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      await createSsoUser({ ssoUser, password: password || undefined, email: email || undefined, role });
+      setSsoUser('');
+      setPassword('');
+      setEmail('');
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title="Create SSO user" description="Password defaults to SSO user when left blank." open={props.open} onClose={props.onClose}>
+      <FormGrid>
+        <Label text="SSO user"><Input value={ssoUser} onChange={(event) => setSsoUser(event.target.value)} /></Label>
+        <Label text="Password"><Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" /></Label>
+        <Label text="Email"><Input value={email} onChange={(event) => setEmail(event.target.value)} /></Label>
+        <Label text="Role"><RoleSelect value={role} onChange={setRole} /></Label>
+      </FormGrid>
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Create user" />
+    </Dialog>
+  );
+}
+
+function EditUserDialog(props: { user?: SsoUserDto; onClose: () => void; onDone: () => Promise<void> }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'user' | 'admin'>('user');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!props.user) return;
+    setEmail(props.user.email);
+    setRole(props.user.role);
+    setPassword('');
+    setError(undefined);
+  }, [props.user]);
+
+  const submit = async () => {
+    if (!props.user) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      await patchSsoUser(props.user.ssoUser, { email, role, password: password || undefined });
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title={`Edit ${props.user?.ssoUser ?? ''}`} description="Leave password blank to keep the current password." open={Boolean(props.user)} onClose={props.onClose}>
+      <FormGrid>
+        <Label text="Email"><Input value={email} onChange={(event) => setEmail(event.target.value)} /></Label>
+        <Label text="New password"><Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" /></Label>
+        <Label text="Role"><RoleSelect value={role} onChange={setRole} /></Label>
+      </FormGrid>
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Save changes" />
+    </Dialog>
+  );
+}
+
+function ImportUsersDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+  const [csvText, setCsvText] = useState('ssoUser,password\n');
+  const [result, setResult] = useState<ReactNode>();
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      const importResult = await importSsoUsers(csvText);
+      setResult(
+        <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm">
+          <p className="font-medium">Batch {importResult.batchId}: {importResult.summary.success} success, {importResult.summary.failed} failed</p>
+          <ul className="mt-2 max-h-52 overflow-auto">
+            {importResult.rows.map((row) => <li key={`${row.line}-${row.ssoUser}`}>Line {row.line}: {row.ssoUser || '-'} - {row.status} - {row.detail}</li>)}
+          </ul>
+        </div>,
+      );
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title="Import SSO users" description="CSV format: ssoUser or ssoUser,password. Existing users get password updates." open={props.open} onClose={props.onClose}>
+      <Textarea value={csvText} onChange={(event) => setCsvText(event.target.value)} className="h-56 w-full font-mono" />
+      {result}
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Import" />
+    </Dialog>
+  );
+}
+
+function ImportEmuUsersDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+  const [ssoUser, setSsoUser] = useState('');
+  const [plan, setPlan] = useState<ImportEmuPlanDto>();
+  const [rows, setRows] = useState<ImportEmuUserRow[]>([]);
+  const [rowTotal, setRowTotal] = useState(0);
+  const [rowPage, setRowPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<ImportEmuUserStatus | ''>('');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState<'preview' | 'apply' | 'rows' | 'delete'>();
+
+  const loadRows = async (planId: string, nextPage = rowPage, nextStatus = statusFilter) => {
+    setSaving('rows');
+    setError(undefined);
+    try {
+      const result = await listEmuImportPlanRows(planId, { page: nextPage, pageSize: EMU_IMPORT_ROW_PAGE_SIZE, status: nextStatus });
+      setRows(result.items);
+      setRowTotal(result.total);
+      setRowPage(result.page);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(undefined);
+    }
+  };
+
+  const preview = async () => {
+    setSaving('preview');
+    setError(undefined);
+    try {
+      const nextPlan = await createEmuImportPlan({ ssoUser: ssoUser.trim() || undefined });
+      setPlan(nextPlan);
+      setStatusFilter('');
+      await loadRows(nextPlan.planId, 1, '');
+    } catch (err) {
+      setError((err as Error).message);
+      setSaving(undefined);
+    }
+  };
+
+  const applyPlan = async () => {
+    if (!plan) return;
+    setSaving('apply');
+    setError(undefined);
+    try {
+      const nextPlan = await applyEmuImportPlan(plan.planId);
+      setPlan(nextPlan);
+      await loadRows(nextPlan.planId, rowPage, statusFilter);
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+      setSaving(undefined);
+    }
+  };
+
+  const deletePlan = async () => {
+    if (!plan) return;
+    if (!window.confirm('Delete this GH import plan data? This only removes preview/apply rows and does not delete SSO users or GH logins.')) return;
+    setSaving('delete');
+    setError(undefined);
+    try {
+      await deleteEmuImportPlan(plan.planId);
+      setPlan(undefined);
+      setRows([]);
+      setRowTotal(0);
+      setRowPage(1);
+      setStatusFilter('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(undefined);
+    }
+  };
+
+  const resetSsoUser = (value: string) => {
+    setSsoUser(value);
+    setPlan(undefined);
+    setRows([]);
+    setRowTotal(0);
+    setRowPage(1);
+  };
+  const changeStatusFilter = (value: ImportEmuUserStatus | '') => {
+    setStatusFilter(value);
+    if (plan) void loadRows(plan.planId, 1, value);
+  };
+  const actionable = (plan?.summary.actionable ?? 0) > 0;
+
+  return (
+    <Dialog
+      title="Import SSO users from GH"
+      description="Preview alignment from GitHub SCIM first, then apply safe create/update rows. Leave SSO user blank to scan all users."
+      open={props.open}
+      onClose={props.onClose}
+    >
+      <Label text="SSO user">
+        <Input value={ssoUser} onChange={(event) => resetSsoUser(event.target.value)} placeholder="Optional; blank imports all" />
+      </Label>
+      {plan ? (
+        <EmuImportResult
+          plan={plan}
+          rows={rows}
+          rowTotal={rowTotal}
+          rowPage={rowPage}
+          statusFilter={statusFilter}
+          loadingRows={saving === 'rows'}
+          onStatusFilter={changeStatusFilter}
+          onPage={(nextPage) => loadRows(plan.planId, nextPage, statusFilter)}
+        />
+      ) : null}
+      <footer className="mt-5 flex flex-col gap-3">
+        {error ? <p className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+        <div className="flex justify-end gap-2">
+          {plan ? (
+            <Button variant="danger" onClick={deletePlan} disabled={Boolean(saving)}>
+              {saving === 'delete' ? 'Deleting...' : 'Delete plan data'}
+            </Button>
+          ) : null}
+          <Button variant="secondary" onClick={props.onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={preview} disabled={Boolean(saving)}>
+            {saving === 'preview' ? 'Previewing...' : 'Preview alignment'}
+          </Button>
+          <Button onClick={applyPlan} disabled={Boolean(saving) || !actionable}>
+            {saving === 'apply' ? 'Applying...' : 'Apply safe changes'}
+          </Button>
+        </div>
+      </footer>
+    </Dialog>
+  );
+}
+
+function EmuImportResult(props: {
+  plan: ImportEmuPlanDto;
+  rows: ImportEmuUserRow[];
+  rowTotal: number;
+  rowPage: number;
+  statusFilter: ImportEmuUserStatus | '';
+  loadingRows: boolean;
+  onStatusFilter: (status: ImportEmuUserStatus | '') => void;
+  onPage: (page: number) => void;
+}) {
+  const summary = props.plan.summary;
+  return (
+    <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm">
+      <p className="font-medium">Plan {props.plan.planId}: {summary.actionable} actionable, {summary.skipped} skipped, {summary.conflict} conflict, {summary.failed} failed</p>
+      <div className="mt-2 grid gap-2 text-xs md:grid-cols-4">
+        <Info label="Pending create" value={formatNumber(summary.pendingCreate)} />
+        <Info label="Pending update" value={formatNumber(summary.pendingUpdate)} />
+        <Info label="Created/updated" value={`${formatNumber(summary.created)} / ${formatNumber(summary.updated)}`} />
+        <Info label="Total rows" value={formatNumber(summary.total)} />
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={props.statusFilter} onChange={(event) => props.onStatusFilter(event.target.value as ImportEmuUserStatus | '')}>
+          {EMU_IMPORT_ROW_STATUSES.map((status) => <option key={status || 'all'} value={status}>{status || 'all statuses'}</option>)}
+        </select>
+        <span className="text-xs text-slate-500">{props.loadingRows ? 'Loading rows...' : `${formatNumber(props.rowTotal)} row(s)`}</span>
+      </div>
+      <ul className="mt-2 max-h-52 overflow-auto">
+        {props.rows.map((row, index) => (
+          <li key={`${row.ghScimId ?? row.ssoUser}-${row.status}-${index}`} className={row.status === 'conflict' || row.status === 'failed' ? 'text-red-700' : ''}>
+            #{row.rowIndex ?? '-'} {row.ssoUser || '-'} - {row.status} - {row.detail}
+            {row.ghLogin ? ` GH login: ${row.ghLogin}` : ''}
+            {row.passwordForLogin ? ` Login password: ${row.passwordForLogin}` : ''}
+          </li>
+        ))}
+        {props.rows.length === 0 ? <li className="text-slate-500">No rows match this filter.</li> : null}
+      </ul>
+      <Pagination page={props.rowPage} total={props.rowTotal} pageSize={EMU_IMPORT_ROW_PAGE_SIZE} onPage={props.onPage} />
+    </div>
+  );
+}
+
+function BatchCreateDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+  const [prefix, setPrefix] = useState('user');
+  const [start, setStart] = useState(1);
+  const [count, setCount] = useState(5);
+  const [role, setRole] = useState<'user' | 'admin'>('user');
+  const [syncAfterCreate, setSyncAfterCreate] = useState(false);
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const preview = Array.from({ length: Math.max(0, Math.min(count, 20)) }, (_, index) => `${prefix}${start + index}`);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(undefined);
+    try {
+      const createdSsoUsers: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const ssoUser = `${prefix}${start + index}`;
+        await createSsoUser({ ssoUser, role });
+        createdSsoUsers.push(ssoUser);
+      }
+      if (syncAfterCreate && createdSsoUsers.length > 0) await runSsoUserBatch({ operation: 'sync_emu', ssoUsers: createdSsoUsers });
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title="Batch create SSO users" description="Generate a predictable set of local SSO accounts." open={props.open} onClose={props.onClose}>
+      <FormGrid>
+        <Label text="Prefix"><Input value={prefix} onChange={(event) => setPrefix(event.target.value)} /></Label>
+        <Label text="Start index"><Input type="number" value={start} onChange={(event) => setStart(Number(event.target.value))} /></Label>
+        <Label text="Count"><Input type="number" min={1} max={500} value={count} onChange={(event) => setCount(Number(event.target.value))} /></Label>
+        <Label text="Role"><RoleSelect value={role} onChange={setRole} /></Label>
+      </FormGrid>
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={syncAfterCreate} onChange={(event) => setSyncAfterCreate(event.target.checked)} />
+        Sync each user to GH login after creation
+      </label>
+      <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+        <p className="font-medium">Preview</p>
+        <p className="mt-1">{preview.join(', ')}{count > preview.length ? ` ... +${count - preview.length} more` : ''}</p>
+      </div>
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Create users" />
+    </Dialog>
+  );
+}
+
+function GithubRefreshDialog(props: { account?: ProxyAccountDto; onClose: () => void; onDone: () => Promise<void> }) {
+  const [ssoPassword, setSsoPassword] = useState('');
+  const [ssoType, setSsoType] = useState<SsoType>('custom');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (props.account) {
+      setSsoPassword('');
+      setSsoType('custom');
+      setError(undefined);
+    }
+  }, [props.account]);
+
+  const submit = async () => {
+    if (!props.account) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      await refreshGithubToken(props.account.identity, { ssoPassword, ssoType });
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title={`Refresh GitHub token${props.account ? ` for ${props.account.identity}` : ''}`} description="This creates a login task and requires the user's SSO password." open={Boolean(props.account)} onClose={props.onClose}>
+      <FormGrid>
+        <Label text="SSO password"><Input type="password" value={ssoPassword} onChange={(event) => setSsoPassword(event.target.value)} /></Label>
+        <Label text="SSO type">
+          <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={ssoType} onChange={(event) => setSsoType(event.target.value as SsoType)}>
+            <option value="custom">Custom</option>
+            <option value="azure">Azure</option>
+          </select>
+        </Label>
+      </FormGrid>
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Create refresh task" />
+    </Dialog>
+  );
+}
+
+function RetryTaskDialog(props: { task?: LoginTaskDto; onClose: () => void; onDone: () => Promise<void> }) {
+  const [ssoPassword, setSsoPassword] = useState('');
+  const [ssoType, setSsoType] = useState<SsoType>('custom');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (props.task) {
+      setSsoPassword('');
+      setSsoType(props.task.ssoType === 'azure' ? 'azure' : 'custom');
+      setError(undefined);
+    }
+  }, [props.task]);
+
+  const submit = async () => {
+    if (!props.task) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      await retryLoginTask(props.task.id, { ssoPassword, ssoType });
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title={`Retry login task ${props.task?.id.slice(0, 8) ?? ''}`} description="Retry requires an SSO password because passwords are not stored." open={Boolean(props.task)} onClose={props.onClose}>
+      <FormGrid>
+        <Label text="SSO password"><Input type="password" value={ssoPassword} onChange={(event) => setSsoPassword(event.target.value)} /></Label>
+        <Label text="SSO type">
+          <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={ssoType} onChange={(event) => setSsoType(event.target.value as SsoType)}>
+            <option value="custom">Custom</option>
+            <option value="azure">Azure</option>
+          </select>
+        </Label>
+      </FormGrid>
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Retry task" />
+    </Dialog>
+  );
+}
+
+function ProxyAccountDetailDialog(props: { account?: ProxyAccountDto; onClose: () => void }) {
+  const [stats, setStats] = useState<ProxyRequestStatDto[]>([]);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    if (!props.account) return;
+    setStats([]);
+    setError(undefined);
+    void listRequestStats({ identity: props.account.identity, limit: 20 })
+      .then(setStats)
+      .catch((err: Error) => setError(err.message));
+  }, [props.account]);
+
+  return (
+    <Dialog title={`Account ${props.account?.identity ?? ''}`} description="Identity mapping, token status, and recent request stats." open={Boolean(props.account)} onClose={props.onClose}>
+      {props.account ? (
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <Info label="Header identity" value={props.account.identity} />
+            <Info label="SSO user" value={props.account.ssoUser} />
+            <Info label="GH login" value={props.account.ghLogin ?? '-'} />
+            <Info label="GitHub token" value={props.account.ghTokenStatus} />
+            <Info label="Copilot token" value={props.account.copilotTokenStatus} />
+            <Info label="Copilot expires" value={formatDate(props.account.copilotTokenExpiresAt)} />
+          </div>
+          {error ? <ErrorState message={error} /> : null}
+          <div className="max-h-96 overflow-auto rounded border border-slate-200">
+            <RequestStatsTable stats={stats} compact />
+          </div>
+        </div>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function LoginTasksTable(props: {
+  tasks: LoginTaskDto[];
+  compact?: boolean;
+  selected?: Set<string>;
+  allSelected?: boolean;
+  onSelect?: (id: string, checked: boolean) => void;
+  onSelectAll?: (checked: boolean) => void;
+}) {
+  return (
+    <Table compact={props.compact}>
+      <thead>
+        <tr>
+          {!props.compact ? <Th><input type="checkbox" checked={Boolean(props.allSelected)} onChange={(event) => props.onSelectAll?.(event.target.checked)} aria-label="Select all login tasks" /></Th> : null}
+          {!props.compact ? <Th>Task ID</Th> : null}
+          <Th>Identity</Th>
+          <Th>SSO user</Th>
+          {!props.compact ? <Th>GH login</Th> : null}
+          <Th>Status</Th>
+          {!props.compact ? <Th>Attempts</Th> : null}
+          <Th>Failure</Th>
+          {!props.compact ? <Th>Created</Th> : null}
+        </tr>
+      </thead>
+      <tbody>
+        {props.tasks.map((task) => (
+          <tr key={task.id}>
+            {!props.compact ? <Td><input type="checkbox" checked={props.selected?.has(task.id) ?? false} onChange={(event) => props.onSelect?.(task.id, event.target.checked)} aria-label={`Select login task ${task.id}`} /></Td> : null}
+            {!props.compact ? <Td className="font-mono text-xs">{task.id}</Td> : null}
+            <Td>{task.identity}</Td>
+            <Td>{task.ssoUser}</Td>
+            {!props.compact ? <Td>{task.ghLogin ?? '-'}</Td> : null}
+            <Td><Badge tone={statusTone(task.status)}>{task.status}</Badge></Td>
+            {!props.compact ? <Td>{task.attempts}</Td> : null}
+            <Td className="max-w-xs truncate" title={task.failureReason}>{task.failureReason ?? '-'}</Td>
+            {!props.compact ? <Td>{formatDate(task.createdAt)}</Td> : null}
+          </tr>
+        ))}
+        {props.tasks.length === 0 ? <EmptyRow colSpan={props.compact ? 4 : 9} label="No login tasks found." /> : null}
+      </tbody>
+    </Table>
+  );
+}
+
+function RequestStatsTable(props: { stats: ProxyRequestStatDto[]; compact?: boolean }) {
+  return (
+    <Table compact={props.compact}>
+      <thead>
+        <tr>
+          {!props.compact ? <Th>Requested</Th> : null}
+          <Th>Identity</Th>
+          {!props.compact ? <Th>GH login</Th> : null}
+          <Th>Path</Th>
+          <Th>Model</Th>
+          <Th>Outcome</Th>
+          {!props.compact ? <Th>Input</Th> : null}
+          {!props.compact ? <Th>Output</Th> : null}
+          {!props.compact ? <Th>Cache input</Th> : null}
+          {!props.compact ? <Th>Cache write</Th> : null}
+          {!props.compact ? <Th>Cache total</Th> : null}
+          <Th>Total</Th>
+          <Th>Failure</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {props.stats.map((stat) => {
+          const cache = statCacheTokens(stat);
+          const total = tokenTotal(stat.inputTokens, stat.outputTokens, cache);
+          return (
+            <tr key={stat.id}>
+              {!props.compact ? <Td>{formatDate(stat.requestedAt)}</Td> : null}
+              <Td>{stat.identity}</Td>
+              {!props.compact ? <Td>{stat.ghLogin ?? '-'}</Td> : null}
+              <Td>{stat.path}</Td>
+              <Td>{stat.model ?? '-'}</Td>
+              <Td><Badge tone={stat.success ? 'success' : 'danger'}>{stat.success ? 'success' : 'failed'}</Badge></Td>
+              {!props.compact ? <Td>{formatNumber(stat.inputTokens)}</Td> : null}
+              {!props.compact ? <Td>{formatNumber(stat.outputTokens)}</Td> : null}
+              {!props.compact ? <Td>{formatNumber(stat.cacheInputTokens)}</Td> : null}
+              {!props.compact ? <Td>{formatNumber(stat.cacheWriteTokens)}</Td> : null}
+              {!props.compact ? <Td>{formatNumber(cache)}</Td> : null}
+              <Td>{formatNumber(total)}</Td>
+              <Td className="max-w-xs truncate" title={stat.failureReason}>{stat.failureReason ?? '-'}</Td>
+            </tr>
+          );
+        })}
+        {props.stats.length === 0 ? <EmptyRow colSpan={props.compact ? 6 : 13} label="No request stats found." /> : null}
+      </tbody>
+    </Table>
+  );
+}
+
+function statCacheTokens(stat: ProxyRequestStatDto): number | undefined {
+  return stat.cacheTokens ?? tokenTotal(stat.cacheInputTokens, stat.cacheWriteTokens);
+}
+
+function periodLabel(period: { year: number; month: number }): string {
+  return `${period.year}-${String(period.month).padStart(2, '0')}`;
+}
+
+function formatAiUnits(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatCurrency(value: number): string {
+  return value.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+}
+
+function MetricCard(props: { title: string; value: string | number; detail: string; error?: string }) {
+  return (
+    <Card>
+      <p className="text-sm font-medium text-slate-600">{props.title}</p>
+      <p className="mt-2 text-3xl font-bold text-slate-950">{props.error ? '-' : props.value}</p>
+      <p className={`mt-2 text-sm ${props.error ? 'text-red-600' : 'text-slate-600'}`}>{props.error ?? props.detail}</p>
+    </Card>
+  );
+}
+
+function StatusWithDate(props: { status: string; date?: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge tone={statusTone(props.status)}>{props.status}</Badge>
+      {props.date ? <span className="text-xs text-slate-500">{props.date.startsWith('expires ') ? props.date : formatDate(props.date)}</span> : null}
+    </div>
+  );
+}
+
+function DialogActions(props: { error?: string; saving: boolean; submitLabel: string; onCancel: () => void; onSubmit: () => void | Promise<void> }) {
+  return (
+    <footer className="mt-5 flex flex-col gap-3">
+      {props.error ? <p className="rounded bg-red-50 p-3 text-sm text-red-700">{props.error}</p> : null}
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={props.onCancel}>Cancel</Button>
+        <Button onClick={props.onSubmit} disabled={props.saving}>{props.saving ? 'Working...' : props.submitLabel}</Button>
+      </div>
+    </footer>
+  );
+}
+
+function RoleSelect(props: { value: 'user' | 'admin'; onChange: (role: 'user' | 'admin') => void }) {
+  return (
+    <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={props.value} onChange={(event) => props.onChange(event.target.value as 'user' | 'admin')}>
+      <option value="user">User</option>
+      <option value="admin">Admin</option>
+    </select>
+  );
+}
+
+function FormGrid(props: { children: ReactNode }) {
+  return <div className="grid gap-3 md:grid-cols-2">{props.children}</div>;
+}
+
+function Label(props: { text: string; children: ReactNode }) {
+  return <label className="flex flex-col gap-1 text-sm font-medium text-slate-700"><span>{props.text}</span>{props.children}</label>;
+}
+
+function Info(props: { label: string; value: ReactNode }) {
+  return (
+    <div className="rounded-md border border-slate-200 p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{props.label}</p>
+      <p className="mt-1 text-sm text-slate-950">{props.value}</p>
+    </div>
+  );
+}
+
+function Table(props: { children: ReactNode; compact?: boolean }) {
+  return <table className={`w-full border-collapse text-left text-sm ${props.compact ? 'table-fixed' : 'min-w-[1000px]'}`}>{props.children}</table>;
+}
+
+function Th(props: { children: ReactNode }) {
+  return <th className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{props.children}</th>;
+}
+
+function Td(props: { children: ReactNode; className?: string; title?: string }) {
+  return <td title={props.title} className={`border-b border-slate-100 px-3 py-2 align-top text-slate-700 ${props.className ?? ''}`}>{props.children}</td>;
+}
+
+function EmptyRow(props: { colSpan: number; label: string }) {
+  return <tr><td colSpan={props.colSpan} className="px-3 py-8 text-center text-sm text-slate-500">{props.label}</td></tr>;
+}
+
+function LoadingState(props: { label: string }) {
+  return <p className="rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-700">{props.label}</p>;
+}
+
+function ErrorState(props: { message: string }) {
+  return <p className="rounded-md border border-red-100 bg-red-50 p-3 text-sm text-red-700">{props.message}</p>;
+}
+
+function Pagination(props: { page: number; total: number; pageSize: number; onPage: (page: number) => void }) {
+  const totalPages = Math.max(1, Math.ceil(props.total / props.pageSize));
+  return (
+    <div className="flex items-center justify-between rounded-md border border-slate-200 bg-white p-3 text-sm">
+      <span>Page {props.page} of {totalPages}, {props.total} total</span>
+      <div className="flex gap-2">
+        <Button variant="secondary" disabled={props.page <= 1} onClick={() => props.onPage(props.page - 1)}>Previous</Button>
+        <Button variant="secondary" disabled={props.page >= totalPages} onClick={() => props.onPage(props.page + 1)}>Next</Button>
+      </div>
+    </div>
+  );
+}
+
+function countBy<T extends object>(items: T[], key: keyof T): string {
+  if (items.length === 0) return 'No records';
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const value = String(item[key] ?? 'unknown');
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([value, count]) => `${value}: ${count}`).join(' / ');
+}
+
+function readPageFromHash(): Page {
+  const raw = window.location.hash.replace(/^#/, '');
+  return pages.some((entry) => entry.id === raw) ? raw as Page : 'dashboard';
+}

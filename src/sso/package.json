@@ -1,0 +1,15 @@
+{
+  "name": "@ghcp/sso",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "start:prod": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ghcp/shared": "0.1.0"
+  }
+}
