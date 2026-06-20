@@ -6,6 +6,8 @@
 
 > proxy 参考repo https://github.com/hooyao/copilot-bridge
 
+> 前期准备: ([guidance/guidance.md](./guidance/guidance.md))
+
 ## 背景
 
 开源社区已经有不少项目可以把 Copilot 包装成 API 来用，例如 LiteLLM、ccswitch、copilot2api 等。这些方案通常适合**单个开发者本地使用**：本地代理读取一个 GitHub/Copilot 登录态，再把请求转发到 Copilot 后端。
