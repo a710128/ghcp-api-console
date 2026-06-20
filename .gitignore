@@ -18,3 +18,4 @@ src/**/logs/
 *.sqlite
 .env
 certs/
+.keys
