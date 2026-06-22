@@ -6,7 +6,7 @@
 
 > proxy 参考repo https://github.com/hooyao/copilot-bridge
 
-> 前期准备: ([guidance/guidance.md](./guidance/guidance.md))
+> 管理员的配置手册: ([guidance/guidance.md](./guidance/guidance.md))
 
 ## 背景
 
