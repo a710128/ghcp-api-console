@@ -1,7 +1,6 @@
 import { TextDecoder } from 'node:util';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { apiError } from '@ghcp/shared';
-import { config } from '../config.js';
 import { recordRequestStat } from '../db/requestStatsRepo.js';
 import { Logger } from '../logger.js';
 import { tokenManager, TokenNotReadyError } from '../copilot/tokenManager.js';
@@ -23,6 +22,7 @@ import {
   shouldTranslateWebSearchError,
   webSearchUnsupportedMessage,
 } from './claudeCodeCompat.js';
+import { resolveClaudeCodeOptimized } from './claudeCodeMode.js';
 
 export const compatibleRouter = Router();
 const logger = new Logger('compatible');
@@ -38,12 +38,14 @@ interface UsageStats {
 compatibleRouter.get('/v1/models', async (req, res) => {
   const identity = requireIdentity(req, res);
   if (!identity) return;
+  const claudeCodeOptimized = requireClaudeCodeOptimized(req, res);
+  if (claudeCodeOptimized === undefined) return;
   try {
     const copilot = await tokenManager.getToken(identity);
     const models = await listModels(copilot);
-    const visibleModels = config.claudeCodeOptimized ? models.filter((m) => modelSupportsPath(m, '/v1/messages')) : models;
+    const visibleModels = claudeCodeOptimized ? models.filter((m) => modelSupportsPath(m, '/v1/messages')) : models;
     recordRequestStat({ identity, path: '/v1/models', success: true });
-    if (config.claudeCodeOptimized) {
+    if (claudeCodeOptimized) {
       const data = visibleModels.map(toClaudeCodeModel);
       res.json({
         data,
@@ -69,11 +71,13 @@ compatibleRouter.post('/responses', async (req, res) => {
 });
 
 compatibleRouter.post('/v1/messages/count_tokens', async (req, res) => {
-  if (!config.claudeCodeOptimized) {
-    sendUnsupportedCompatiblePath(req, res);
+  const claudeCodeOptimized = requireClaudeCodeOptimized(req, res);
+  if (claudeCodeOptimized === undefined) return;
+  if (!claudeCodeOptimized) {
+    sendUnsupportedCompatiblePath(req, res, claudeCodeOptimized);
     return;
   }
-  await handleCountTokens(req, res);
+  await handleCountTokens(req, res, claudeCodeOptimized);
 });
 
 compatibleRouter.post('/v1/messages', async (req, res) => {
@@ -82,8 +86,10 @@ compatibleRouter.post('/v1/messages', async (req, res) => {
 
 compatibleRouter.use('/v1/files', handleFilesApiUnsupported);
 
-function handleFilesApiUnsupported(_req: Request, res: Response, next: NextFunction): void {
-  if (!config.claudeCodeOptimized) {
+function handleFilesApiUnsupported(req: Request, res: Response, next: NextFunction): void {
+  const claudeCodeOptimized = requireClaudeCodeOptimized(req, res);
+  if (claudeCodeOptimized === undefined) return;
+  if (!claudeCodeOptimized) {
     next();
     return;
   }
@@ -98,6 +104,8 @@ function handleFilesApiUnsupported(_req: Request, res: Response, next: NextFunct
 async function handleForward(req: Request, res: Response, path: CopilotApiPath): Promise<void> {
   const identity = requireIdentity(req, res);
   if (!identity) return;
+  const claudeCodeOptimized = requireClaudeCodeOptimized(req, res);
+  if (claudeCodeOptimized === undefined) return;
   const body = readJsonObject(req.body);
   if (!body) {
     sendOpenAiLikeError(req, res, 400, 'Request body must be a JSON object.', 'invalid_request_error');
@@ -106,7 +114,7 @@ async function handleForward(req: Request, res: Response, path: CopilotApiPath):
   const requestedModel = typeof body.model === 'string' ? body.model : undefined;
   try {
     if (!requestedModel) throw new CopilotModelPathError('Request body must include a string "model".');
-    const prepared = prepareForward(req, path, body);
+    const prepared = prepareForward(req, path, body, claudeCodeOptimized);
     if (prepared.preflightError) {
       recordRequestStat({ identity, path, model: requestedModel, success: false, failureReason: prepared.preflightError.message });
       sendAnthropicError(res, prepared.preflightError.status, prepared.preflightError.type, prepared.preflightError.message);
@@ -122,7 +130,7 @@ async function handleForward(req: Request, res: Response, path: CopilotApiPath):
   }
 }
 
-async function handleCountTokens(req: Request, res: Response): Promise<void> {
+async function handleCountTokens(req: Request, res: Response, claudeCodeOptimized: boolean): Promise<void> {
   const identity = requireIdentity(req, res);
   if (!identity) return;
   const path: CopilotApiPath = '/v1/messages/count_tokens';
@@ -134,7 +142,7 @@ async function handleCountTokens(req: Request, res: Response): Promise<void> {
   const requestedModel = typeof body.model === 'string' ? body.model : undefined;
   try {
     if (!requestedModel) throw new CopilotModelPathError('Request body must include a string "model".');
-    const prepared = prepareForward(req, path, body);
+    const prepared = prepareForward(req, path, body, claudeCodeOptimized);
     if (prepared.preflightError) {
       recordRequestStat({ identity, path, model: requestedModel, success: false, failureReason: prepared.preflightError.message });
       sendAnthropicError(res, prepared.preflightError.status, prepared.preflightError.type, prepared.preflightError.message);
@@ -161,13 +169,14 @@ function prepareForward(
   req: Request,
   path: CopilotApiPath,
   body: Record<string, unknown>,
+  claudeCodeOptimized: boolean,
 ): {
   body: Record<string, unknown>;
   forwardOptions?: ForwardCopilotRequestOptions;
   pipeOptions?: PipeOptions;
   preflightError?: { status: number; type: string; message: string };
 } {
-  if (!config.claudeCodeOptimized || !path.startsWith('/v1/messages')) return { body };
+  if (!claudeCodeOptimized || !path.startsWith('/v1/messages')) return { body };
   const prepared = prepareClaudeCodeMessagesRequest(req, body, { tokenCounting: path === '/v1/messages/count_tokens' });
   return {
     body: prepared.body,
@@ -525,6 +534,13 @@ function requireIdentity(req: Request, res: Response): string | undefined {
   return undefined;
 }
 
+function requireClaudeCodeOptimized(req: Request, res: Response): boolean | undefined {
+  const resolved = resolveClaudeCodeOptimized(req);
+  if (resolved.ok) return resolved.enabled;
+  sendOpenAiLikeError(req, res, 400, resolved.message, 'invalid_request_error');
+  return undefined;
+}
+
 function sendCompatibleError(req: Request, res: Response, err: unknown): void {
   if (err instanceof TokenNotReadyError) {
     res.status(err.status).json(apiError(err.code, err.message));
@@ -546,16 +562,16 @@ function sendAnthropicError(res: Response, status: number, type: string, message
   res.status(status).type('application/json').json({ type: 'error', error: { type, message } });
 }
 
-function sendUnsupportedCompatiblePath(req: Request, res: Response): void {
+function sendUnsupportedCompatiblePath(req: Request, res: Response, claudeCodeOptimized: boolean): void {
   const message =
     `Unsupported Copilot API path: ${req.originalUrl}. ` +
-    supportedPathsMessage();
+    supportedPathsMessage(claudeCodeOptimized);
   sendOpenAiLikeError(req, res, 404, message, 'invalid_request_error');
 }
 
-function supportedPathsMessage(): string {
+function supportedPathsMessage(claudeCodeOptimized: boolean): string {
   const paths = ['GET /v1/models', 'POST /chat/completions', 'POST /v1/messages', 'POST /responses'];
-  if (config.claudeCodeOptimized) paths.splice(3, 0, 'POST /v1/messages/count_tokens');
+  if (claudeCodeOptimized) paths.splice(3, 0, 'POST /v1/messages/count_tokens');
   return `Supported paths: ${paths.join(', ')}.`;
 }
 

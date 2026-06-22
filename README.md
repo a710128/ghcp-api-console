@@ -87,15 +87,15 @@ cp .env.example .env
 | `SCIM_BASE_URL` / `SCIM_TOKEN` | GitHub Enterprise SCIM API 地址和 token。 |
 | `GITHUB_COPILOT_SEAT_PAT` | 管理 Copilot seat / AI Credits 的 GitHub PAT。 |
 
-根目录 `.env` 也包含 proxy 的公共 API 和转发 header 配置。Docker Compose 默认使用 `CLAUDE_CODE_OPTIMIZED=true` 启动 proxy，会开启 Claude Code / Anthropic Messages 兼容优化和 `/v1/messages/count_tokens`；如果要关闭，改成 `false` 后重启 compose。
+根目录 `.env` 也包含 proxy 的公共 API 和转发 header 配置。Docker Compose 默认使用 `CLAUDE_CODE_OPTIMIZED=true` 启动 proxy，作为 Claude Code / Anthropic Messages 兼容优化和 `/v1/messages/count_tokens` 的默认模式；单个请求可用 `X-Claude-Code-Optimized: true|false` 覆盖，无需重启服务。
 
 | 变量 | 说明 |
 | --- | --- |
 | `IDENTITY_HEADER` / `IDENTITY_HEADER_REQUIRED` | 调用方身份 header 名称和是否必填；默认 `X-User-Identity` 必填。 |
 | `EDITOR_VERSION` / `EDITOR_PLUGIN_VERSION` / `USER_AGENT` | proxy 向 Copilot 后端转发时使用的编辑器标识 header。 |
 | `GITHUB_API_VERSION` / `COPILOT_INTEGRATION_ID` | proxy 默认 Copilot/GitHub API 版本和集成标识 header。 |
-| `VSCODE_SESSION_ID` / `VSCODE_MACHINE_ID` / `EDITOR_DEVICE_ID` | Claude Code 优化模式下的 VS Code 风格 header；留空时每个 proxy 进程随机生成。 |
-| `CLAUDE_CODE_GITHUB_API_VERSION` | Claude Code 优化模式下覆盖转发请求的 `X-GitHub-Api-Version`。 |
+| `VSCODE_SESSION_ID` / `VSCODE_MACHINE_ID` / `EDITOR_DEVICE_ID` | 请求解析为 Claude Code 优化模式时使用的 VS Code 风格 header；留空时每个 proxy 进程随机生成。 |
+| `CLAUDE_CODE_GITHUB_API_VERSION` | 请求解析为 Claude Code 优化模式时覆盖转发请求的 `X-GitHub-Api-Version`。 |
 
 2. 准备 SAML 证书：
 
@@ -133,6 +133,7 @@ http://localhost:7004
 Authorization: Bearer <API_KEY>
 X-User-Identity: <your-user-identity>
 Content-Type: application/json
+X-Claude-Code-Optimized: true|false  # 可选；覆盖 CLAUDE_CODE_OPTIMIZED 默认值
 ```
 
 示例：
@@ -195,7 +196,7 @@ curl http://localhost:3000/responses \
   }'
 ```
 
-`model` 需要替换为支持目标 API path 的模型。默认 `CLAUDE_CODE_OPTIMIZED=true` 时，`GET /v1/models` 面向 Claude Code 只返回支持 `/v1/messages` 的模型，并保持 Copilot 原始模型名，例如 `claude-opus-4.8`。`/responses` 示例中的 `gpt-5` 需要替换为账号可用且支持 `/responses` 的 Copilot 模型。如果你在 `.env` 里改了 `IDENTITY_HEADER`，示例里的 `X-User-Identity` 也要同步替换。
+`model` 需要替换为支持目标 API path 的模型。默认 `CLAUDE_CODE_OPTIMIZED=true` 时，`GET /v1/models` 面向 Claude Code 只返回支持 `/v1/messages` 的模型，并保持 Copilot 原始模型名，例如 `claude-opus-4.8`；如果某次请求需要完整 Copilot/OpenAI 风格模型列表，传 `X-Claude-Code-Optimized: false`。`/responses` 示例中的 `gpt-5` 需要替换为账号可用且支持 `/responses` 的 Copilot 模型。如果你在 `.env` 里改了 `IDENTITY_HEADER`，示例里的 `X-User-Identity` 也要同步替换。
 
 Claude Code 可以通过 settings 文件接入本地 proxy，例如 `~/.claude/settings.json` ：
 

@@ -25,7 +25,7 @@ Proxy 位于客户端与 GitHub Copilot 后端之间，负责：
 | 模型与路径校验 | `src/copilot/copilotClient.ts` | 转发前读取 `/models`，判断模型是否适用于当前 API 路径；模型缓存 1 小时，失败时可短期使用旧缓存。 |
 | 请求转发 | `src/routes/compatible.ts` | 转发 JSON/SSE 响应；上游 401 时刷新 Copilot Token 并重试一次。 |
 | 请求统计 | `src/db/requestStatsRepo.ts` | 记录路径、模型、成功/失败、失败原因、输入/输出/cache token；按账号保留最近 N 条。 |
-| Claude Code 优化 | `src/routes/claudeCodeCompat.ts`、`src/routes/anthropicModelProfiles.ts` | 可选开启，对 `/v1/messages*` 做 Anthropic/Claude Code 兼容处理、模型规范化和 profile 驱动的 thinking/effort 修正。 |
+| Claude Code 优化 | `src/routes/claudeCodeMode.ts`、`src/routes/claudeCodeCompat.ts`、`src/routes/anthropicModelProfiles.ts` | 可选开启，对 `/v1/messages*` 做 Anthropic/Claude Code 兼容处理、模型规范化和 profile 驱动的 thinking/effort 修正；支持请求头覆盖默认模式。 |
 
 当前未提供：独立的测试脚本、生产专用 `start:prod` 脚本、Docker `EXPOSE`/`HEALTHCHECK` 声明。
 
@@ -84,7 +84,7 @@ Proxy 通过 `dotenv/config` 读取环境变量。未设置时使用 `src/config
 | `API_KEY` | 空字符串 / `change-me` | 是 | 公共代理接口的本地 API Key；为空时公共接口无法通过鉴权。 |
 | `IDENTITY_HEADER` | `X-User-Identity` / 同 | 否 | 公共请求中用于绑定 proxy 账号的请求头名。 |
 | `IDENTITY_HEADER_REQUIRED` | `true` / `true` | 否 | 为 `false` 时缺失身份头会使用 `default`。 |
-| `CLAUDE_CODE_OPTIMIZED` | `false` / `false` | 否 | 开启 Claude Code 兼容优化和 `/v1/messages/count_tokens`。 |
+| `CLAUDE_CODE_OPTIMIZED` | `false` / `false` | 否 | Claude Code 兼容优化和 `/v1/messages/count_tokens` 的默认模式；单个请求可用 `X-Claude-Code-Optimized: true|false` 覆盖。 |
 | `INTERNAL_API_TOKEN` | 空字符串 / `change-me` | 是 | `/api`、`/internal` 鉴权；同时用于 Proxy 调用 SSO/Login 服务。 |
 | `SSO_BASE_URL` | `http://localhost:7001` / 同 | 否 | SSO 服务地址；用于确保用户、读取 SSO 用户、同步 EMU。 |
 | `LOGIN_BASE_URL` | `http://localhost:7003` / 同 | 否 | Login 服务地址；用于创建 GitHub Token 刷新/登录任务。 |
@@ -95,7 +95,7 @@ Proxy 通过 `dotenv/config` 读取环境变量。未设置时使用 `src/config
 | `USER_AGENT` | `GitHubCopilotChat/0.46.0` / `GitHubCopilotChat/0.52.0` | 否 | 同上。 |
 | `GITHUB_API_VERSION` | `2026-01-09` / 同 | 否 | 默认 Copilot/GitHub API 版本头。 |
 | `COPILOT_INTEGRATION_ID` | `vscode-chat` / 同 | 否 | Copilot 集成标识头。 |
-| `VSCODE_SESSION_ID` | 随机 UUID / 空 | 否 | 仅 `CLAUDE_CODE_OPTIMIZED=true` 时使用；空值每进程随机生成。 |
+| `VSCODE_SESSION_ID` | 随机 UUID / 空 | 否 | 请求解析为 Claude Code 优化模式时使用；空值每进程随机生成。 |
 | `VSCODE_MACHINE_ID` | 随机 UUID / 空 | 否 | 同上。 |
 | `EDITOR_DEVICE_ID` | 随机 UUID / 空 | 否 | 同上。 |
 | `CLAUDE_CODE_GITHUB_API_VERSION` | `2026-01-09` / `2026-01-09` | 否 | Claude Code 优化模式下覆盖 `X-GitHub-Api-Version`。 |
@@ -117,6 +117,7 @@ Authorization: Bearer <API_KEY>
 # 或 x-api-key: <API_KEY>
 X-User-Identity: <identity>
 Content-Type: application/json
+X-Claude-Code-Optimized: true|false  # 可选；覆盖 CLAUDE_CODE_OPTIMIZED 默认值
 ```
 
 内部管理/服务间接口需要：
@@ -137,11 +138,11 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 
 | 方法 | 路径 | 认证 | 请求核心结构 | 响应核心结构 |
 | --- | --- | --- | --- | --- |
-| `GET` | `/v1/models` | API Key + identity | 无 | 默认返回 OpenAI/Copilot 风格 `{ object: "list", data: [...] }`。Claude Code 优化模式下只返回支持 `/v1/messages` 的模型，并返回 Anthropic 风格 `{ data: [{ type: "model", id, display_name, max_input_tokens, max_tokens }], has_more, first_id, last_id }`；`id` 保持 Copilot 原始模型名。 |
+| `GET` | `/v1/models` | API Key + identity | 无 | 非优化模式返回 OpenAI/Copilot 风格 `{ object: "list", data: [...] }`。Claude Code 优化模式下只返回支持 `/v1/messages` 的模型，并返回 Anthropic 风格 `{ data: [{ type: "model", id, display_name, max_input_tokens, max_tokens }], has_more, first_id, last_id }`；`id` 保持 Copilot 原始模型名。 |
 | `POST` | `/chat/completions` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Chat Completions 形状 | 直接返回 Copilot 上游状态、`content-type` 和 body；支持 SSE。 |
 | `POST` | `/responses` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Responses 形状 | 同上。 |
 | `POST` | `/v1/messages` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持 Anthropic Messages 形状 | 同上；优化模式会做 Claude Code 兼容预处理。 |
-| `POST` | `/v1/messages/count_tokens` | API Key + identity | 仅 `CLAUDE_CODE_OPTIMIZED=true`；JSON 对象，必须含 `model: string` | 优先转发到上游；若上游返回 404/405/501，则本地估算并返回 `{ input_tokens: number }`。 |
+| `POST` | `/v1/messages/count_tokens` | API Key + identity | 仅当前请求解析为优化模式时可用；JSON 对象，必须含 `model: string` | 优先转发到上游；若上游返回 404/405/501，则本地估算并返回 `{ input_tokens: number }`。 |
 | 任意 | `/v1/files*` | API Key + identity | 当前未提供 Files API | 优化模式下返回 Anthropic 风格 `not_supported`；非优化模式走统一 404。 |
 
 边界说明：
@@ -154,7 +155,7 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 
 #### Claude Code 优化模式
 
-`CLAUDE_CODE_OPTIMIZED=true` 时，Proxy 将 `/v1/messages` 和 `/v1/messages/count_tokens` 视为 Claude Code 入口，但仍然转发到 Copilot 原生 Anthropic Messages API，不做 Anthropic/OpenAI 大模型协议转换。当前优化逻辑包括：
+当请求解析为 Claude Code 优化模式时，Proxy 将 `/v1/messages` 和 `/v1/messages/count_tokens` 视为 Claude Code 入口，但仍然转发到 Copilot 原生 Anthropic Messages API，不做 Anthropic/OpenAI 大模型协议转换。默认值来自 `CLAUDE_CODE_OPTIMIZED`，单个请求可用 `X-Claude-Code-Optimized: true|false` 覆盖。当前优化逻辑包括：
 
 - **模型与路径**：`GET /v1/models` 只暴露 Copilot `/models` 中支持 `/v1/messages` 的模型；请求体中的 Claude 日期后缀模型名会先规范化，例如 `claude-sonnet-4-5-20250929` -> `claude-sonnet-4.5`，再做路径校验和上游转发。
 - **模型 profile**：`anthropicModelProfiles.ts` 维护 Claude 模型的 thinking/effort 能力。enabled-only 模型会去掉不支持的 `output_config.effort`，并把 `thinking.type=adaptive` 改成合法的 enabled 形态；adaptive-only 模型会把 `thinking.type=enabled` 改成 `adaptive`；预算会限制到 profile 上限并保持 `< max_tokens`，thinking 打开时会把强制工具选择 `any/tool` 改成 `auto`。
@@ -166,7 +167,7 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 - **token count**：`/v1/messages/count_tokens` 复用同一套 body 预处理和前置错误检查，优先转发 Copilot；若上游返回 404/405/501，则用本地 JSON 长度估算 `{ input_tokens }`。
 - **SSE**：`/v1/messages` 的 SSE 基本透传，保留 Copilot 扩展字段；仅过滤 Copilot 末尾的 OpenAI 风格 `[DONE]` 事件，避免 Claude Code 按 Anthropic SSE 解析时报错。
 
-`CLAUDE_CODE_OPTIMIZED=false` 时，Proxy 不会因为请求来自 Claude Code 就拒绝；`POST /v1/messages` 仍会按 Anthropic Messages 形状直接转发，但不会做 Claude Code body 预处理、不会加 VS Code/Claude Code optimized 转发 header，也不会开放 `/v1/messages/count_tokens`。
+当请求解析为非优化模式时，Proxy 不会因为请求来自 Claude Code 就拒绝；`POST /v1/messages` 仍会按 Anthropic Messages 形状直接转发，但不会做 Claude Code body 预处理、不会加 VS Code/Claude Code optimized 转发 header，也不会开放 `/v1/messages/count_tokens`。
 
 公共兼容接口的主要拒绝/错误返回逻辑：
 
@@ -175,10 +176,11 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 | 缺 API Key | `401 missing_api_key`，提示使用 `Authorization: Bearer` 或 `x-api-key`。 |
 | API Key 不匹配 | `401 invalid_api_key`。 |
 | 缺 identity header，且 `IDENTITY_HEADER_REQUIRED=true` | `400 missing_identity_header`。 |
+| `X-Claude-Code-Optimized` 不是合法布尔值 | `400 invalid_request_error`。 |
 | 请求 body 不是 JSON 对象 | `400 invalid_request_error`。 |
 | 请求 body 缺少字符串类型 `model` | `400 invalid_request_error`。 |
 | `model` 不存在，或不支持当前路径 | `400 invalid_request_error`。 |
-| `CLAUDE_CODE_OPTIMIZED=false` 时请求 `/v1/messages/count_tokens` | `404 invalid_request_error`，并列出当前支持路径。 |
+| 当前请求解析为非优化模式时请求 `/v1/messages/count_tokens` | `404 invalid_request_error`，并列出当前支持路径。 |
 | 请求未支持路径，例如 `/v1/files*` | `404 invalid_request_error`；优化模式下 `/v1/files*` 返回 Anthropic 风格 `not_supported`。 |
 | 上游 Copilot 返回 401/403 | 返回对应 `401` / `403`。 |
 | 其他上游或转发错误 | 通常返回 `502 api_error`。 |

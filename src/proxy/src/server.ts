@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import { config } from './config.js';
 import { getDb } from './db/connection.js';
 import { pruneAllRequestStats } from './db/requestStatsRepo.js';
@@ -6,6 +6,7 @@ import { requireApiKey } from './auth/apiKey.js';
 import { requireIdentityHeader } from './auth/identityHeader.js';
 import { requireInternalToken } from './auth/internalAuth.js';
 import { compatibleRouter } from './routes/compatible.js';
+import { resolveClaudeCodeOptimized } from './routes/claudeCodeMode.js';
 import { adminApiRouter } from './routes/adminApi.js';
 import { internalApiRouter } from './routes/internalApi.js';
 
@@ -19,9 +20,14 @@ export function buildApp(): express.Express {
   app.use('/internal', requireInternalToken, internalApiRouter);
   app.use(requireApiKey, requireIdentityHeader, compatibleRouter);
   app.use((req, res) => {
+    const claudeCodeOptimized = resolveClaudeCodeOptimized(req);
+    if (!claudeCodeOptimized.ok) {
+      sendInvalidRequestError(req, res, claudeCodeOptimized.message);
+      return;
+    }
     const message =
       `Unsupported Copilot API path: ${req.originalUrl}. ` +
-      supportedPathsMessage();
+      supportedPathsMessage(claudeCodeOptimized.enabled);
     if (req.path.startsWith('/v1/messages')) {
       res.status(404).json({ type: 'error', error: { type: 'invalid_request_error', message } });
       return;
@@ -31,10 +37,18 @@ export function buildApp(): express.Express {
   return app;
 }
 
-function supportedPathsMessage(): string {
+function supportedPathsMessage(claudeCodeOptimized: boolean): string {
   const paths = ['GET /v1/models', 'POST /chat/completions', 'POST /v1/messages', 'POST /responses'];
-  if (config.claudeCodeOptimized) paths.splice(3, 0, 'POST /v1/messages/count_tokens');
+  if (claudeCodeOptimized) paths.splice(3, 0, 'POST /v1/messages/count_tokens');
   return `Supported paths: ${paths.join(', ')}.`;
+}
+
+function sendInvalidRequestError(req: Request, res: Response, message: string): void {
+  if (req.path.startsWith('/v1/messages')) {
+    res.status(400).json({ type: 'error', error: { type: 'invalid_request_error', message } });
+    return;
+  }
+  res.status(400).json({ error: { message, type: 'invalid_request_error' } });
 }
 
 export function startServer(): void {
