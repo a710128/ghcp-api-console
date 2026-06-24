@@ -182,6 +182,7 @@ cp .env.example .env
 | `SCIM_BASE_URL` | `https://api.github.com/scim/v2/enterprises/<enterprise-slug>`。 |
 | `SCIM_TOKEN` | 第 5 节生成的 SCIM token。 |
 | `GITHUB_COPILOT_SEAT_PAT` | 第 9 节创建的 GitHub 管理 PAT；此时还没有可以先留空，创建后再补。 |
+| `LOGIN_SSO_URL` | `login` 服务中的浏览器能够访问的 SSO 登录地址。通常可以使用 `https://<sso-public-base-url>:7001` 或者 `http://<sso-public-base-url>:7001/login`。 |
 
 如果使用 Docker Compose，默认端口来自 `.env`：
 
@@ -192,7 +193,6 @@ LOGIN_PORT=7003
 CONSOLE_PORT=7004
 ```
 
-`LOGIN_SSO_URL` 需要配置为 login 服务中的浏览器能够访问的 SSO 登录地址。通常可以使用 `https://<sso-public-base-url>/login`；如果在同一个 Docker 网络中验证，也可以使用内部地址，但必须确保 Playwright 浏览器进程可访问。
 
 ### 6.2 生成 SAML 证书
 
