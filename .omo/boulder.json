@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "active_work_id": "postgres-horizontal-stability-f5f19d1b",
+  "works": {
+    "postgres-horizontal-stability-f5f19d1b": {
+      "work_id": "postgres-horizontal-stability-f5f19d1b",
+      "active_plan": "/Users/zengguoyang/code/git/ghcp-api-console/.omo/plans/postgres-horizontal-stability.md",
+      "plan_name": "postgres-horizontal-stability",
+      "status": "active",
+      "started_at": "2026-07-22T11:47:13.086Z",
+      "updated_at": "2026-07-22T12:19:47.354Z",
+      "session_ids": [
+        "opencode:ses_0765945d7ffekejodz47Nx4f4s"
+      ],
+      "session_origins": {
+        "opencode:ses_0765945d7ffekejodz47Nx4f4s": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "Establish the PostgreSQL persistence package, dependency graph, and isolated test harness",
+          "session_id": "opencode:ses_076555f11ffejsvpMl3goe1Jz9",
+          "agent": "Sisyphus-Junior",
+          "category": "ultrabrain",
+          "updated_at": "2026-07-22T12:19:47.354Z",
+          "started_at": "2026-07-22T12:19:47.354Z",
+          "status": "running"
+        }
+      }
+    }
+  },
+  "active_plan": "/Users/zengguoyang/code/git/ghcp-api-console/.omo/plans/postgres-horizontal-stability.md",
+  "started_at": "2026-07-22T11:47:13.086Z",
+  "status": "active",
+  "updated_at": "2026-07-22T12:19:47.354Z",
+  "session_ids": [
+    "opencode:ses_0765945d7ffekejodz47Nx4f4s"
+  ],
+  "session_origins": {
+    "opencode:ses_0765945d7ffekejodz47Nx4f4s": "direct"
+  },
+  "plan_name": "postgres-horizontal-stability",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Establish the PostgreSQL persistence package, dependency graph, and isolated test harness",
+      "session_id": "opencode:ses_076555f11ffejsvpMl3goe1Jz9",
+      "agent": "Sisyphus-Junior",
+      "category": "ultrabrain",
+      "updated_at": "2026-07-22T12:19:47.354Z",
+      "started_at": "2026-07-22T12:19:47.354Z",
+      "status": "running"
+    }
+  },
+  "agent": "atlas"
+}
