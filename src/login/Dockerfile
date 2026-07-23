@@ -6,6 +6,7 @@ COPY src ./src
 RUN npm ci \
   && npx playwright install --with-deps chromium \
   && npm --workspace @ghcp/shared run build \
+  && npm --workspace @ghcp/database run build \
   && npm --workspace @ghcp/login run build \
   && npm prune --omit=dev
 ENV NODE_ENV=production

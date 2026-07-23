@@ -42,7 +42,7 @@ services:
 
   db-migrate:
     image: ghcp-login:local
-    entrypoint: ["node", "--import", "/app/src/packages/database/node_modules/tsx/dist/esm/index.cjs", "/app/src/packages/database/src/cli/migrate.ts"]
+    entrypoint: ["node", "/app/src/packages/database/dist/cli/migrate.js"]
     environment:
       <<: *database-env
     depends_on:
@@ -84,6 +84,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.sso.rule=Host(`${SSO_HOST}`)"
       - "traefik.http.routers.sso.tls=true"
+      - "traefik.http.routers.sso.tls.certresolver=le"
       - "traefik.http.routers.sso.entrypoints=websecure"
       - "traefik.http.services.sso.loadbalancer.server.port=7001"
     volumes:
@@ -140,8 +141,8 @@ services:
       context: .
       dockerfile: src/login/Dockerfile
     image: ghcp-login:local
-    entrypoint: ["node", "--import", "./node_modules/tsx/dist/esm/index.cjs", "src/worker.ts"]
-    working_dir: /app/src/login
+    entrypoint: ["node", "worker.js"]
+    working_dir: /app/src/login/dist
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       <<: *database-env
@@ -171,6 +172,8 @@ services:
       context: .
       dockerfile: src/proxy/Dockerfile
     image: ghcp-proxy:local
+    ports:
+      - "3000:3000"
     environment:
       PORT: "3000"
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -193,11 +196,12 @@ services:
       VSCODE_MACHINE_ID: "${VSCODE_MACHINE_ID:-}"
       EDITOR_DEVICE_ID: "${EDITOR_DEVICE_ID:-}"
       CLAUDE_CODE_GITHUB_API_VERSION: ${CLAUDE_CODE_GITHUB_API_VERSION:-2026-01-09}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.proxy.rule=Host(`${PROXY_HOST:?set PROXY_HOST}`)"
-      - "traefik.http.routers.proxy.entrypoints=web,websecure"
-      - "traefik.http.services.proxy.loadbalancer.server.port=3000"
+    # labels disabled for 方案 A: proxy 走宿主机端口 3000 内网直连，不经 Traefik
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.proxy.rule=Host(`${PROXY_HOST:?set PROXY_HOST}`)"
+    #   - "traefik.http.routers.proxy.entrypoints=web,websecure"
+    #   - "traefik.http.services.proxy.loadbalancer.server.port=3000"
     depends_on:
       sso:
         condition: service_healthy
@@ -219,6 +223,8 @@ services:
       context: .
       dockerfile: src/console/Dockerfile
     image: ghcp-console:local
+    ports:
+      - "8004:7004"
     environment:
       PORT: "7004"
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -228,11 +234,12 @@ services:
       PROXY_BASE_URL: http://proxy:3000
       SSO_BASE_URL: http://sso:7001
       LOGIN_BASE_URL: http://login:7003
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.console.rule=Host(`${CONSOLE_HOST:?set CONSOLE_HOST}`)"
-      - "traefik.http.routers.console.entrypoints=web,websecure"
-      - "traefik.http.services.console.loadbalancer.server.port=7004"
+    # labels disabled for 方案 A: console 走宿主机端口 7004 内网直连，不经 Traefik
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.console.rule=Host(`${CONSOLE_HOST:?set CONSOLE_HOST}`)"
+    #   - "traefik.http.routers.console.entrypoints=web,websecure"
+    #   - "traefik.http.services.console.loadbalancer.server.port=7004"
     volumes:
       - console-data:/data
     depends_on:
@@ -254,7 +261,7 @@ services:
       - internal
 
   traefik:
-    image: traefik:v3.3
+    image: traefik:v3.6.23
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedByDefault=false"
@@ -262,9 +269,15 @@ services:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--log.level=INFO"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=admin@aesaib9xahvireix.modelbest.cn"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      - letsencrypt:/letsencrypt
     depends_on:
       - socket-proxy
     logging:
@@ -276,7 +289,7 @@ services:
       - internal
 
   socket-proxy:
-    image: tecnativa/docker-socket-proxy:0.3
+    image: tecnativa/docker-socket-proxy:v0.4.2
     environment:
       CONTAINERS: 1
       NETWORKS: 1
@@ -289,6 +302,7 @@ services:
 volumes:
   postgres-data:
   console-data:
+  letsencrypt:
 
 networks:
   internal:

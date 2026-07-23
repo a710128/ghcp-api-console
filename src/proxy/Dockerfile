@@ -5,6 +5,7 @@ COPY tsconfig.base.json ./
 COPY src ./src
 RUN npm ci \
   && npm --workspace @ghcp/shared run build \
+  && npm --workspace @ghcp/database run build \
   && npm --workspace @ghcp/proxy run build \
   && npm prune --omit=dev
 ENV NODE_ENV=production
