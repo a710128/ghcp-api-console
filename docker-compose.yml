@@ -4,7 +4,54 @@ x-healthcheck-defaults: &healthcheck-defaults
   retries: 12
   start_period: 20s
 
+x-database-env: &database-env
+  DATABASE_URL: postgres://${POSTGRES_USER:-ghcp}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ghcp}
+  DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-ghcp}
+  DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?set DATA_ENCRYPTION_KEY}
+  LOGIN_JOB_ENCRYPTION_KEY: ${LOGIN_JOB_ENCRYPTION_KEY:?set LOGIN_JOB_ENCRYPTION_KEY}
+
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ghcp}
+      POSTGRES_USER: ${POSTGRES_USER:-ghcp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: md5
+    command: >
+      postgres
+      -c max_connections=100
+      -c superuser_reserved_connections=10
+      -c log_connections=off
+      -c log_min_duration_statement=5000
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ghcp} -d ${POSTGRES_DB:-ghcp}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
+
+  db-migrate:
+    image: ghcp-login:local
+    entrypoint: ["node", "--import", "/app/src/packages/database/node_modules/tsx/dist/esm/index.cjs", "/app/src/packages/database/src/cli/migrate.ts"]
+    environment:
+      <<: *database-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - internal
+
   sso:
     build:
       context: .
@@ -13,14 +60,14 @@ services:
     environment:
       PORT: "7001"
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DB_PATH: /data/sso.sqlite
+      <<: *database-env
+      DB_POOL_SIZE: "8"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
-      BASE_URL: ${SSO_PUBLIC_BASE_URL:?set SSO_PUBLIC_BASE_URL}
+      BASE_URL: https://${SSO_HOST:?set SSO_HOST}
       PROXY_BASE_URL: http://proxy:3000
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       SSO_EMAIL_DOMAIN: ${SSO_EMAIL_DOMAIN:-customsso.com}
       USER_PREFIX: ${USER_PREFIX:-user}
-      SSO_USER_EVENTS_LOG: /data/sso-user-events.log
       ENTERPRISE_SLUG: ${ENTERPRISE_SLUG:?set ENTERPRISE_SLUG}
       ENTERPRISE_SHORTCODE: ${ENTERPRISE_SHORTCODE:-octo}
       GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
@@ -33,14 +80,28 @@ services:
       SP_ENTITY_ID: ${SP_ENTITY_ID:?set SP_ENTITY_ID}
       SP_ACS_URL: ${SP_ACS_URL:?set SP_ACS_URL}
       CERT_DIR: /certs
-    ports:
-      - "${SSO_PORT:-7001}:7001"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sso.rule=Host(`${SSO_HOST}`)"
+      - "traefik.http.routers.sso.tls=true"
+      - "traefik.http.routers.sso.entrypoints=websecure"
+      - "traefik.http.services.sso.loadbalancer.server.port=7001"
     volumes:
-      - sso-data:/data
       - ${SSO_CERT_DIR:-./certs}:/certs:ro
+      - console-data:/data
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7001/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
 
   login:
     build:
@@ -50,24 +111,60 @@ services:
     environment:
       PORT: "7003"
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DB_PATH: /data/login.sqlite
+      <<: *database-env
+      DB_POOL_SIZE: "5"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
       PROXY_BASE_URL: http://proxy:3000
-      LOGIN_CONCURRENCY: ${LOGIN_CONCURRENCY:-1}
-      LOG_DIR: /logs/login
-      SSO_URL: ${LOGIN_SSO_URL:-http://sso:7001/login}
+      LOGIN_CONCURRENCY: "1"
+      LOGIN_WORKER_CONCURRENCY: "1"
+      SSO_URL: https://${SSO_HOST:?set SSO_HOST}/login
       SSO_PROVIDER: ${LOGIN_SSO_PROVIDER:-custom}
       AUTH_HEADLESS: ${AUTH_HEADLESS:-true}
       AUTH_TIMEOUT_MS: ${AUTH_TIMEOUT_MS:-60000}
-      AUTH_DEBUG_ARTIFACT_DIR: /logs/auth-debug
-    ports:
-      - "${LOGIN_PORT:-7003}:7003"
-    volumes:
-      - login-data:/data
-      - login-logs:/logs
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7003/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7003/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
+
+  login-worker:
+    build:
+      context: .
+      dockerfile: src/login/Dockerfile
+    image: ghcp-login:local
+    entrypoint: ["node", "--import", "./node_modules/tsx/dist/esm/index.cjs", "src/worker.ts"]
+    working_dir: /app/src/login
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      <<: *database-env
+      DB_POOL_SIZE: "3"
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
+      PROXY_BASE_URL: http://proxy:3000
+      LOGIN_WORKER_CONCURRENCY: "1"
+      SSO_URL: https://${SSO_HOST:?set SSO_HOST}/login
+      SSO_PROVIDER: ${LOGIN_SSO_PROVIDER:-custom}
+      AUTH_HEADLESS: ${AUTH_HEADLESS:-true}
+      AUTH_TIMEOUT_MS: ${AUTH_TIMEOUT_MS:-60000}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      login:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
 
   proxy:
     build:
@@ -77,7 +174,8 @@ services:
     environment:
       PORT: "3000"
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DB_PATH: /data/proxy.sqlite
+      <<: *database-env
+      DB_POOL_SIZE: "10"
       API_KEY: ${API_KEY:?set API_KEY}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
       IDENTITY_HEADER: ${IDENTITY_HEADER:-X-User-Identity}
@@ -86,7 +184,6 @@ services:
       SSO_BASE_URL: http://sso:7001
       LOGIN_BASE_URL: http://login:7003
       ENTERPRISE_SHORTCODE: ${ENTERPRISE_SHORTCODE:-octo}
-      REQUEST_STATS_PER_ACCOUNT_LIMIT: "${REQUEST_STATS_PER_ACCOUNT_LIMIT:-100}"
       EDITOR_VERSION: ${EDITOR_VERSION:-vscode/1.124.2}
       EDITOR_PLUGIN_VERSION: ${EDITOR_PLUGIN_VERSION:-copilot-chat/0.52.0}
       USER_AGENT: ${USER_AGENT:-GitHubCopilotChat/0.52.0}
@@ -96,10 +193,11 @@ services:
       VSCODE_MACHINE_ID: "${VSCODE_MACHINE_ID:-}"
       EDITOR_DEVICE_ID: "${EDITOR_DEVICE_ID:-}"
       CLAUDE_CODE_GITHUB_API_VERSION: ${CLAUDE_CODE_GITHUB_API_VERSION:-2026-01-09}
-    ports:
-      - "${PROXY_PORT:-3000}:3000"
-    volumes:
-      - proxy-data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.proxy.rule=Host(`${PROXY_HOST:?set PROXY_HOST}`)"
+      - "traefik.http.routers.proxy.entrypoints=web,websecure"
+      - "traefik.http.services.proxy.loadbalancer.server.port=3000"
     depends_on:
       sso:
         condition: service_healthy
@@ -107,7 +205,14 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
 
   console:
     build:
@@ -123,8 +228,11 @@ services:
       PROXY_BASE_URL: http://proxy:3000
       SSO_BASE_URL: http://sso:7001
       LOGIN_BASE_URL: http://login:7003
-    ports:
-      - "${CONSOLE_PORT:-7004}:7004"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.console.rule=Host(`${CONSOLE_HOST:?set CONSOLE_HOST}`)"
+      - "traefik.http.routers.console.entrypoints=web,websecure"
+      - "traefik.http.services.console.loadbalancer.server.port=7004"
     volumes:
       - console-data:/data
     depends_on:
@@ -137,10 +245,51 @@ services:
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7004/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
+
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.docker.endpoint=tcp://socket-proxy:2375"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - socket-proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - internal
 
 volumes:
-  proxy-data:
-  sso-data:
-  login-data:
-  login-logs:
+  postgres-data:
   console-data:
+
+networks:
+  internal:
+    driver: bridge

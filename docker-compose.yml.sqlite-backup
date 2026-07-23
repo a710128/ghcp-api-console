@@ -1,0 +1,146 @@
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 20s
+
+services:
+  sso:
+    build:
+      context: .
+      dockerfile: src/sso/Dockerfile
+    image: ghcp-sso:local
+    environment:
+      PORT: "7001"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_PATH: /data/sso.sqlite
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
+      BASE_URL: ${SSO_PUBLIC_BASE_URL:?set SSO_PUBLIC_BASE_URL}
+      PROXY_BASE_URL: http://proxy:3000
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      SSO_EMAIL_DOMAIN: ${SSO_EMAIL_DOMAIN:-customsso.com}
+      USER_PREFIX: ${USER_PREFIX:-user}
+      SSO_USER_EVENTS_LOG: /data/sso-user-events.log
+      ENTERPRISE_SLUG: ${ENTERPRISE_SLUG:?set ENTERPRISE_SLUG}
+      ENTERPRISE_SHORTCODE: ${ENTERPRISE_SHORTCODE:-octo}
+      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
+      GITHUB_COPILOT_SEAT_PAT: ${GITHUB_COPILOT_SEAT_PAT:-}
+      SCIM_BASE_URL: ${SCIM_BASE_URL:?set SCIM_BASE_URL}
+      SCIM_TOKEN: ${SCIM_TOKEN:?set SCIM_TOKEN}
+      SCIM_REQUEST_DELAY_MS: ${SCIM_REQUEST_DELAY_MS:-250}
+      SCIM_MAX_RETRIES: ${SCIM_MAX_RETRIES:-3}
+      SCIM_RETRY_BASE_DELAY_MS: ${SCIM_RETRY_BASE_DELAY_MS:-1000}
+      SP_ENTITY_ID: ${SP_ENTITY_ID:?set SP_ENTITY_ID}
+      SP_ACS_URL: ${SP_ACS_URL:?set SP_ACS_URL}
+      CERT_DIR: /certs
+    ports:
+      - "${SSO_PORT:-7001}:7001"
+    volumes:
+      - sso-data:/data
+      - ${SSO_CERT_DIR:-./certs}:/certs:ro
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  login:
+    build:
+      context: .
+      dockerfile: src/login/Dockerfile
+    image: ghcp-login:local
+    environment:
+      PORT: "7003"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_PATH: /data/login.sqlite
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
+      PROXY_BASE_URL: http://proxy:3000
+      LOGIN_CONCURRENCY: ${LOGIN_CONCURRENCY:-1}
+      LOG_DIR: /logs/login
+      SSO_URL: ${LOGIN_SSO_URL:-http://sso:7001/login}
+      SSO_PROVIDER: ${LOGIN_SSO_PROVIDER:-custom}
+      AUTH_HEADLESS: ${AUTH_HEADLESS:-true}
+      AUTH_TIMEOUT_MS: ${AUTH_TIMEOUT_MS:-60000}
+      AUTH_DEBUG_ARTIFACT_DIR: /logs/auth-debug
+    ports:
+      - "${LOGIN_PORT:-7003}:7003"
+    volumes:
+      - login-data:/data
+      - login-logs:/logs
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7003/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  proxy:
+    build:
+      context: .
+      dockerfile: src/proxy/Dockerfile
+    image: ghcp-proxy:local
+    environment:
+      PORT: "3000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_PATH: /data/proxy.sqlite
+      API_KEY: ${API_KEY:?set API_KEY}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
+      IDENTITY_HEADER: ${IDENTITY_HEADER:-X-User-Identity}
+      IDENTITY_HEADER_REQUIRED: "${IDENTITY_HEADER_REQUIRED:-true}"
+      CLAUDE_CODE_OPTIMIZED: "${CLAUDE_CODE_OPTIMIZED:-true}"
+      SSO_BASE_URL: http://sso:7001
+      LOGIN_BASE_URL: http://login:7003
+      ENTERPRISE_SHORTCODE: ${ENTERPRISE_SHORTCODE:-octo}
+      REQUEST_STATS_PER_ACCOUNT_LIMIT: "${REQUEST_STATS_PER_ACCOUNT_LIMIT:-100}"
+      EDITOR_VERSION: ${EDITOR_VERSION:-vscode/1.124.2}
+      EDITOR_PLUGIN_VERSION: ${EDITOR_PLUGIN_VERSION:-copilot-chat/0.52.0}
+      USER_AGENT: ${USER_AGENT:-GitHubCopilotChat/0.52.0}
+      GITHUB_API_VERSION: ${GITHUB_API_VERSION:-2025-04-01}
+      COPILOT_INTEGRATION_ID: ${COPILOT_INTEGRATION_ID:-vscode-chat}
+      VSCODE_SESSION_ID: "${VSCODE_SESSION_ID:-}"
+      VSCODE_MACHINE_ID: "${VSCODE_MACHINE_ID:-}"
+      EDITOR_DEVICE_ID: "${EDITOR_DEVICE_ID:-}"
+      CLAUDE_CODE_GITHUB_API_VERSION: ${CLAUDE_CODE_GITHUB_API_VERSION:-2026-01-09}
+    ports:
+      - "${PROXY_PORT:-3000}:3000"
+    volumes:
+      - proxy-data:/data
+    depends_on:
+      sso:
+        condition: service_healthy
+      login:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  console:
+    build:
+      context: .
+      dockerfile: src/console/Dockerfile
+    image: ghcp-console:local
+    environment:
+      PORT: "7004"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ADMINS_FILE: /data/admins.json
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
+      PROXY_BASE_URL: http://proxy:3000
+      SSO_BASE_URL: http://sso:7001
+      LOGIN_BASE_URL: http://login:7003
+    ports:
+      - "${CONSOLE_PORT:-7004}:7004"
+    volumes:
+      - console-data:/data
+    depends_on:
+      proxy:
+        condition: service_healthy
+      sso:
+        condition: service_healthy
+      login:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7004/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+volumes:
+  proxy-data:
+  sso-data:
+  login-data:
+  login-logs:
+  console-data:
