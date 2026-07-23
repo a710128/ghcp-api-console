@@ -1,0 +1,94 @@
+ table_schema |      table_name      |             constraint_name             | constraint_type 
+--------------+----------------------+-----------------------------------------+-----------------
+ login        | job_outbox           | 16905_16935_10_not_null                 | CHECK
+ login        | job_outbox           | job_outbox_state_check                  | CHECK
+ login        | job_outbox           | 16905_16935_1_not_null                  | CHECK
+ login        | job_outbox           | 16905_16935_2_not_null                  | CHECK
+ login        | job_outbox           | 16905_16935_3_not_null                  | CHECK
+ login        | job_outbox           | 16905_16935_4_not_null                  | CHECK
+ login        | job_outbox           | job_outbox_task_id_fkey                 | FOREIGN KEY
+ login        | job_outbox           | job_outbox_pkey                         | PRIMARY KEY
+ login        | job_outbox           | job_outbox_pg_boss_key_key              | UNIQUE
+ login        | result_outbox        | 16905_16953_2_not_null                  | CHECK
+ login        | result_outbox        | 16905_16953_7_not_null                  | CHECK
+ login        | result_outbox        | 16905_16953_3_not_null                  | CHECK
+ login        | result_outbox        | 16905_16953_13_not_null                 | CHECK
+ login        | result_outbox        | 16905_16953_4_not_null                  | CHECK
+ login        | result_outbox        | 16905_16953_1_not_null                  | CHECK
+ login        | result_outbox        | 16905_16953_12_not_null                 | CHECK
+ login        | result_outbox        | 16905_16953_5_not_null                  | CHECK
+ login        | result_outbox        | result_outbox_state_check               | CHECK
+ login        | result_outbox        | result_outbox_task_id_fkey              | FOREIGN KEY
+ login        | result_outbox        | result_outbox_pkey                      | PRIMARY KEY
+ login        | task_secrets         | 16905_16922_3_not_null                  | CHECK
+ login        | task_secrets         | 16905_16922_1_not_null                  | CHECK
+ login        | task_secrets         | 16905_16922_4_not_null                  | CHECK
+ login        | task_secrets         | 16905_16922_2_not_null                  | CHECK
+ login        | task_secrets         | task_secrets_task_id_fkey               | FOREIGN KEY
+ login        | task_secrets         | task_secrets_pkey                       | PRIMARY KEY
+ login        | tasks                | 16905_16906_2_not_null                  | CHECK
+ login        | tasks                | 16905_16906_1_not_null                  | CHECK
+ login        | tasks                | tasks_sso_type_check                    | CHECK
+ login        | tasks                | tasks_status_check                      | CHECK
+ login        | tasks                | 16905_16906_3_not_null                  | CHECK
+ login        | tasks                | 16905_16906_12_not_null                 | CHECK
+ login        | tasks                | 16905_16906_11_not_null                 | CHECK
+ login        | tasks                | 16905_16906_9_not_null                  | CHECK
+ login        | tasks                | 16905_16906_7_not_null                  | CHECK
+ login        | tasks                | 16905_16906_6_not_null                  | CHECK
+ login        | tasks                | 16905_16906_5_not_null                  | CHECK
+ login        | tasks                | tasks_pkey                              | PRIMARY KEY
+ proxy        | accounts             | accounts_gh_token_status_check          | CHECK
+ proxy        | accounts             | accounts_copilot_token_status_check     | CHECK
+ proxy        | accounts             | 16821_16822_1_not_null                  | CHECK
+ proxy        | accounts             | 16821_16822_2_not_null                  | CHECK
+ proxy        | accounts             | 16821_16822_6_not_null                  | CHECK
+ proxy        | accounts             | 16821_16822_12_not_null                 | CHECK
+ proxy        | accounts             | 16821_16822_13_not_null                 | CHECK
+ proxy        | accounts             | 16821_16822_17_not_null                 | CHECK
+ proxy        | accounts             | 16821_16822_18_not_null                 | CHECK
+ proxy        | accounts             | accounts_pkey                           | PRIMARY KEY
+ sso          | budget_cache         | 16837_16867_1_not_null                  | CHECK
+ sso          | budget_cache         | 16837_16867_2_not_null                  | CHECK
+ sso          | budget_cache         | 16837_16867_3_not_null                  | CHECK
+ sso          | budget_cache         | 16837_16867_4_not_null                  | CHECK
+ sso          | budget_cache         | 16837_16867_6_not_null                  | CHECK
+ sso          | budget_cache         | budget_cache_pkey                       | PRIMARY KEY
+ sso          | emu_import_plan_rows | 16837_16888_1_not_null                  | CHECK
+ sso          | emu_import_plan_rows | 16837_16888_2_not_null                  | CHECK
+ sso          | emu_import_plan_rows | 16837_16888_3_not_null                  | CHECK
+ sso          | emu_import_plan_rows | 16837_16888_8_not_null                  | CHECK
+ sso          | emu_import_plan_rows | 16837_16888_9_not_null                  | CHECK
+ sso          | emu_import_plan_rows | 16837_16888_11_not_null                 | CHECK
+ sso          | emu_import_plan_rows | 16837_16888_12_not_null                 | CHECK
+ sso          | emu_import_plan_rows | emu_import_plan_rows_action_check       | CHECK
+ sso          | emu_import_plan_rows | emu_import_plan_rows_status_check       | CHECK
+ sso          | emu_import_plan_rows | emu_import_plan_rows_plan_id_fkey       | FOREIGN KEY
+ sso          | emu_import_plan_rows | emu_import_plan_rows_pkey               | PRIMARY KEY
+ sso          | emu_import_plans     | 16837_16876_1_not_null                  | CHECK
+ sso          | emu_import_plans     | 16837_16876_3_not_null                  | CHECK
+ sso          | emu_import_plans     | 16837_16876_6_not_null                  | CHECK
+ sso          | emu_import_plans     | 16837_16876_7_not_null                  | CHECK
+ sso          | emu_import_plans     | emu_import_plans_status_check           | CHECK
+ sso          | emu_import_plans     | emu_import_plans_pkey                   | PRIMARY KEY
+ sso          | scim_rate_limits     | 16837_16858_1_not_null                  | CHECK
+ sso          | scim_rate_limits     | 16837_16858_2_not_null                  | CHECK
+ sso          | scim_rate_limits     | scim_rate_limits_pkey                   | PRIMARY KEY
+ sso          | users                | 16837_16838_1_not_null                  | CHECK
+ sso          | users                | users_copilot_seat_last_operation_check | CHECK
+ sso          | users                | users_copilot_seat_status_check         | CHECK
+ sso          | users                | users_emu_status_check                  | CHECK
+ sso          | users                | users_role_check                        | CHECK
+ sso          | users                | users_credential_source_check           | CHECK
+ sso          | users                | 16837_16838_15_not_null                 | CHECK
+ sso          | users                | 16837_16838_8_not_null                  | CHECK
+ sso          | users                | 16837_16838_4_not_null                  | CHECK
+ sso          | users                | 16837_16838_3_not_null                  | CHECK
+ sso          | users                | 16837_16838_2_not_null                  | CHECK
+ sso          | users                | 16837_16838_5_not_null                  | CHECK
+ sso          | users                | 16837_16838_14_not_null                 | CHECK
+ sso          | users                | 16837_16838_13_not_null                 | CHECK
+ sso          | users                | 16837_16838_9_not_null                  | CHECK
+ sso          | users                | users_pkey                              | PRIMARY KEY
+(90 rows)
+

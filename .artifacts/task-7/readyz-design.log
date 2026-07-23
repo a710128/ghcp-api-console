@@ -1,0 +1,15 @@
+Checking readyz logic: PostgreSQL connectivity check
+/healthz: always 200 (process liveness only)
+/readyz: 503 until initPool() completes, then checks:
+  1. PostgreSQL SELECT 1 query
+  2. Returns 200 with { status: 'ok', service: '...', activeRequests: N }
+  3. Returns 503 if DB not reachable
+
+Graceful shutdown:
+  - SIGTERM/SIGINT received → isReady = false, server.close()
+  - Wait up to 30s for activeRequests to drain to 0
+  - exit(0) if clean, exit(1) if timed out
+
+Active request tracking:
+  - Middleware increments activeRequests on each request
+  - res.on('finish') and res.on('close') decrement

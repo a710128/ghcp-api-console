@@ -1,59 +1,249 @@
 {
   "schema_version": 2,
-  "active_work_id": "postgres-horizontal-stability-f5f19d1b",
+  "active_work_id": "raise-unit-test-coverage-a718d253",
   "works": {
-    "postgres-horizontal-stability-f5f19d1b": {
-      "work_id": "postgres-horizontal-stability-f5f19d1b",
-      "active_plan": "/Users/zengguoyang/code/git/ghcp-api-console/.omo/plans/postgres-horizontal-stability.md",
-      "plan_name": "postgres-horizontal-stability",
-      "status": "active",
-      "started_at": "2026-07-22T11:47:13.086Z",
-      "updated_at": "2026-07-22T12:19:47.354Z",
+    "raise-unit-test-coverage-a718d253": {
+      "work_id": "raise-unit-test-coverage-a718d253",
+      "active_plan": "/root/ghcp-api-console/.omo/plans/raise-unit-test-coverage.md",
+      "plan_name": "raise-unit-test-coverage",
+      "status": "completed",
+      "started_at": "2026-07-23T03:59:14.666Z",
+      "updated_at": "2026-07-23T05:31:19.180Z",
       "session_ids": [
-        "opencode:ses_0765945d7ffekejodz47Nx4f4s"
+        "opencode:ses_072df5b2effebYXP72sQzcQ2CA"
       ],
       "session_origins": {
-        "opencode:ses_0765945d7ffekejodz47Nx4f4s": "direct"
+        "opencode:ses_072df5b2effebYXP72sQzcQ2CA": "direct"
       },
       "agent": "atlas",
       "task_sessions": {
         "todo:1": {
           "task_key": "todo:1",
           "task_label": "1",
-          "task_title": "Establish the PostgreSQL persistence package, dependency graph, and isolated test harness",
-          "session_id": "opencode:ses_076555f11ffejsvpMl3goe1Jz9",
+          "task_title": "Add node:test+tsx+c8 test toolchain, enforce Node 22, and build workspace deps",
+          "session_id": "opencode:ses_072d6cb64ffenQnP2P0HsCyJ4u",
           "agent": "Sisyphus-Junior",
-          "category": "ultrabrain",
-          "updated_at": "2026-07-22T12:19:47.354Z",
-          "started_at": "2026-07-22T12:19:47.354Z",
-          "status": "running"
+          "category": "unspecified-high",
+          "updated_at": "2026-07-23T04:16:16.950Z",
+          "started_at": "2026-07-23T04:15:37.241Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T04:16:16.950Z",
+          "elapsed_ms": 39709
+        },
+        "todo:2": {
+          "task_key": "todo:2",
+          "task_label": "2",
+          "task_title": "Create shared test-support helper (keys, correct Postgres reset harness, fetch mock)",
+          "session_id": "opencode:ses_072cb7d4effe0kiEbRt559AbM3",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-07-23T04:25:08.580Z",
+          "started_at": "2026-07-23T04:24:38.116Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T04:25:08.580Z",
+          "elapsed_ms": 30464
+        },
+        "todo:3": {
+          "task_key": "todo:3",
+          "task_label": "3",
+          "task_title": "Unit tests for @ghcp/shared pure-logic modules",
+          "session_id": "opencode:ses_072c62feaffeQwlP8Cb5WWKk6H",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-07-23T04:39:55.501Z",
+          "started_at": "2026-07-23T04:29:36.628Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T04:39:55.501Z",
+          "elapsed_ms": 618873
+        },
+        "todo:8": {
+          "task_key": "todo:8",
+          "task_label": "8",
+          "task_title": "Unit tests for console server helpers + web format utils",
+          "session_id": "opencode:ses_072b65c9affeVN48pVrU6xLoGT",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-07-23T04:47:25.637Z",
+          "started_at": "2026-07-23T04:47:01.006Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T04:47:25.637Z",
+          "elapsed_ms": 24631
+        },
+        "todo:9": {
+          "task_key": "todo:9",
+          "task_label": "9",
+          "task_title": "Integration tests for @ghcp/database DB-backed logic (real Postgres)",
+          "session_id": "opencode:ses_072b22a49ffe4HN67AnCItDd84",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-07-23T05:08:16.288Z",
+          "started_at": "2026-07-23T04:53:54.494Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T05:08:16.287Z",
+          "elapsed_ms": 861793
+        },
+        "todo:13": {
+          "task_key": "todo:13",
+          "task_label": "13",
+          "task_title": "Add c8 coverage config with ENFORCED threshold, root aggregate command, verify ~80% core logic",
+          "session_id": "opencode:ses_0729eef6effeY65XaVhuz2aZsD",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-07-23T05:13:45.415Z",
+          "started_at": "2026-07-23T05:13:06.964Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T05:13:45.415Z",
+          "elapsed_ms": 38451
+        },
+        "todo:14": {
+          "task_key": "todo:14",
+          "task_label": "14",
+          "task_title": "Document how to run the test suite (README/AGENTS)",
+          "session_id": "opencode:ses_0729a918cffeUdHK6prnRQxOSa",
+          "agent": "Sisyphus-Junior",
+          "category": "writing",
+          "updated_at": "2026-07-23T05:16:23.798Z",
+          "started_at": "2026-07-23T05:15:59.766Z",
+          "status": "completed",
+          "ended_at": "2026-07-23T05:16:23.798Z",
+          "elapsed_ms": 24032
+        },
+        "final-wave:f1": {
+          "task_key": "final-wave:f1",
+          "task_label": "F1",
+          "task_title": "Plan compliance audit — verify every Todo 1-14 is done, each test file exists at the referenced path, each acceptance command passes, and every commit was made. Run `npm test` (root, unit tier) and confirm exit 0 across all workspaces.",
+          "session_id": "opencode:ses_072977070ffePUBrixWV6xcsqY",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-07-23T05:22:14.606Z",
+          "status": "completed",
+          "updated_at": "2026-07-23T05:30:47.203Z",
+          "ended_at": "2026-07-23T05:30:47.203Z",
+          "elapsed_ms": 512597
         }
-      }
+      },
+      "ended_at": "2026-07-23T05:31:19.180Z",
+      "elapsed_ms": 5524514
     }
   },
-  "active_plan": "/Users/zengguoyang/code/git/ghcp-api-console/.omo/plans/postgres-horizontal-stability.md",
-  "started_at": "2026-07-22T11:47:13.086Z",
-  "status": "active",
-  "updated_at": "2026-07-22T12:19:47.354Z",
+  "active_plan": "/root/ghcp-api-console/.omo/plans/raise-unit-test-coverage.md",
+  "started_at": "2026-07-23T03:59:14.666Z",
+  "status": "completed",
+  "updated_at": "2026-07-23T05:31:19.180Z",
   "session_ids": [
-    "opencode:ses_0765945d7ffekejodz47Nx4f4s"
+    "opencode:ses_072df5b2effebYXP72sQzcQ2CA"
   ],
   "session_origins": {
-    "opencode:ses_0765945d7ffekejodz47Nx4f4s": "direct"
+    "opencode:ses_072df5b2effebYXP72sQzcQ2CA": "direct"
   },
-  "plan_name": "postgres-horizontal-stability",
+  "plan_name": "raise-unit-test-coverage",
   "task_sessions": {
     "todo:1": {
       "task_key": "todo:1",
       "task_label": "1",
-      "task_title": "Establish the PostgreSQL persistence package, dependency graph, and isolated test harness",
-      "session_id": "opencode:ses_076555f11ffejsvpMl3goe1Jz9",
+      "task_title": "Add node:test+tsx+c8 test toolchain, enforce Node 22, and build workspace deps",
+      "session_id": "opencode:ses_072d6cb64ffenQnP2P0HsCyJ4u",
       "agent": "Sisyphus-Junior",
-      "category": "ultrabrain",
-      "updated_at": "2026-07-22T12:19:47.354Z",
-      "started_at": "2026-07-22T12:19:47.354Z",
-      "status": "running"
+      "category": "unspecified-high",
+      "updated_at": "2026-07-23T04:16:16.950Z",
+      "started_at": "2026-07-23T04:15:37.241Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T04:16:16.950Z",
+      "elapsed_ms": 39709
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Create shared test-support helper (keys, correct Postgres reset harness, fetch mock)",
+      "session_id": "opencode:ses_072cb7d4effe0kiEbRt559AbM3",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-07-23T04:25:08.580Z",
+      "started_at": "2026-07-23T04:24:38.116Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T04:25:08.580Z",
+      "elapsed_ms": 30464
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "Unit tests for @ghcp/shared pure-logic modules",
+      "session_id": "opencode:ses_072c62feaffeQwlP8Cb5WWKk6H",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-07-23T04:39:55.501Z",
+      "started_at": "2026-07-23T04:29:36.628Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T04:39:55.501Z",
+      "elapsed_ms": 618873
+    },
+    "todo:8": {
+      "task_key": "todo:8",
+      "task_label": "8",
+      "task_title": "Unit tests for console server helpers + web format utils",
+      "session_id": "opencode:ses_072b65c9affeVN48pVrU6xLoGT",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-07-23T04:47:25.637Z",
+      "started_at": "2026-07-23T04:47:01.006Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T04:47:25.637Z",
+      "elapsed_ms": 24631
+    },
+    "todo:9": {
+      "task_key": "todo:9",
+      "task_label": "9",
+      "task_title": "Integration tests for @ghcp/database DB-backed logic (real Postgres)",
+      "session_id": "opencode:ses_072b22a49ffe4HN67AnCItDd84",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-07-23T05:08:16.288Z",
+      "started_at": "2026-07-23T04:53:54.494Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T05:08:16.287Z",
+      "elapsed_ms": 861793
+    },
+    "todo:13": {
+      "task_key": "todo:13",
+      "task_label": "13",
+      "task_title": "Add c8 coverage config with ENFORCED threshold, root aggregate command, verify ~80% core logic",
+      "session_id": "opencode:ses_0729eef6effeY65XaVhuz2aZsD",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-07-23T05:13:45.415Z",
+      "started_at": "2026-07-23T05:13:06.964Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T05:13:45.415Z",
+      "elapsed_ms": 38451
+    },
+    "todo:14": {
+      "task_key": "todo:14",
+      "task_label": "14",
+      "task_title": "Document how to run the test suite (README/AGENTS)",
+      "session_id": "opencode:ses_0729a918cffeUdHK6prnRQxOSa",
+      "agent": "Sisyphus-Junior",
+      "category": "writing",
+      "updated_at": "2026-07-23T05:16:23.798Z",
+      "started_at": "2026-07-23T05:15:59.766Z",
+      "status": "completed",
+      "ended_at": "2026-07-23T05:16:23.798Z",
+      "elapsed_ms": 24032
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "Plan compliance audit — verify every Todo 1-14 is done, each test file exists at the referenced path, each acceptance command passes, and every commit was made. Run `npm test` (root, unit tier) and confirm exit 0 across all workspaces.",
+      "session_id": "opencode:ses_072977070ffePUBrixWV6xcsqY",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-07-23T05:22:14.606Z",
+      "status": "completed",
+      "updated_at": "2026-07-23T05:30:47.203Z",
+      "ended_at": "2026-07-23T05:30:47.203Z",
+      "elapsed_ms": 512597
     }
   },
-  "agent": "atlas"
+  "agent": "atlas",
+  "ended_at": "2026-07-23T05:31:19.180Z",
+  "elapsed_ms": 5524514
 }

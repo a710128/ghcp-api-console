@@ -1,0 +1,3 @@
+DATA_KEY length: 32
+Encrypt/decrypt test: PASS
+Wrong AAD rejected correctly: PASS

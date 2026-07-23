@@ -1,0 +1,6 @@
+[db:migrate] Migrations completed successfully.
+    id     |        initialized_at         
+-----------+-------------------------------
+ singleton | 2026-07-22 17:34:30.549465+00
+(1 row)
+

@@ -1,0 +1,15 @@
+=== Task 2 Negative Tests ===
+
+Test 1: Invalid task status rejected
+ERROR: new row for relation "tasks" violates check constraint "tasks_status_check"
+PASS
+
+Test 2: Orphan task_secret insertion rejected (no parent task)
+ERROR: insert or update on table "task_secrets" violates foreign key constraint "task_secrets_task_id_fkey"
+PASS
+
+Test 3: Invalid credential_source rejected
+ERROR: new row for relation "users" violates check constraint "users_credential_source_check"
+PASS
+
+All constraint enforcement tests passed.

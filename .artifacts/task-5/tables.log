@@ -1,0 +1,8 @@
+      table_name      | count 
+----------------------+-------
+ sso.users            |     0
+ sso.scim_rate_limits |     1
+ sso.budget_cache     |     0
+ sso.emu_import_plans |     0
+(4 rows)
+

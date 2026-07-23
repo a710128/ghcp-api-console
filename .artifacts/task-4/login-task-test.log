@@ -1,0 +1,16 @@
+Task created: {
+  id: "06b08f52-22f4-49f7-b7dc-8f1e1d7d8e7d",
+  status: "pending",
+  task_generation: "1",
+}
+Secret created: YES
+Outbox created: {
+  task_id: "06b08f52-22f4-49f7-b7dc-8f1e1d7d8e7d",
+  state: "pending",
+}
+Account binding: {
+  gh_token_status: "refreshing",
+  active_login_task_id: "06b08f52-22f4-49f7-b7dc-8f1e1d7d8e7d",
+}
+Duplicate check - existing task returned: YES
+PASS: createOrCoalesceLoginTaskTx behavior verified

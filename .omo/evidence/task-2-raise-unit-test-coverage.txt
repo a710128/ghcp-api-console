@@ -1,0 +1,66 @@
+TASK 2 — @ghcp/database/test-support helper module
+===================================================
+Date: 2026-07-23
+Node: v22.23.1 (/usr/bin/node)
+
+ARTIFACTS
+---------
+- NEW  src/packages/database/src/testSupport.ts
+- EDIT src/packages/database/package.json  (added "./test-support" subpath export pointing at the .ts file directly)
+
+EXPORTS PRESENT
+---------------
+TEST_DATA_ENCRYPTION_KEY, TEST_LOGIN_JOB_ENCRYPTION_KEY,
+applyTestEncryptionEnv(), hasTestDatabase(), resetDatabase(pool), mockFetch(responses)
++ types: MockFetchResponse, MockFetchCall
+
+package.json exports (verified):
+  "./test-support": {
+    "types": "./src/testSupport.ts",
+    "import": "./src/testSupport.ts"
+  }
+
+VERIFICATION 1 — module loads, keys are 32 bytes, no DB connection when unset
+-----------------------------------------------------------------------------
+$ node --import tsx/esm -e "import('@ghcp/database/test-support')..."
+keys ok: true true
+data key bytes: 32
+login key bytes: 32
+hasTestDatabase: false          <-- TEST_DATABASE_URL unset => false, NO connection attempted
+exports: applyTestEncryptionEnv:function, hasTestDatabase:function, resetDatabase:function, mockFetch:function
+
+Both keys decode to EXACTLY 32 bytes (required by getDatabaseConfig config.ts:48,55).
+
+VERIFICATION 2 — tsc typecheck
+------------------------------
+$ npm --workspace @ghcp/database run typecheck
+> tsc --noEmit
+(clean, exit 0)
+
+VERIFICATION 3 — mockFetch behavior
+-----------------------------------
+r1 status: 200 ct: application/json json: {"ok":true}   <-- jsonBody => JSON + content-type header
+r2 status: 404 text: nope                                <-- textBody path
+calls: [{"url":"https://a.test/x","method":"POST"},{"url":"https://b.test/y"}]  <-- records url + options, accepts URL objects
+exhausted throws: mockFetch: no more queued responses    <-- throws when queue empty
+
+VERIFICATION 4 — resetDatabase integration test (Docker postgres:16, port 5433)
+-------------------------------------------------------------------------------
+Container: ghcp-api-console-postgres-test-1 (healthy)
+TEST_DATABASE_URL=postgres://ghcp_test:***@127.0.0.1:5433/ghcp_test
+
+hasTestDatabase: true
+resetDatabase: OK (first run)
+resetDatabase: OK (second run, idempotent)     <-- drops proxy/sso/login schemas + public._drizzle_migrations + public.cluster_metadata, re-migrates cleanly
+schemas: login,proxy,sso                        <-- all 3 schemas rebuilt by migration
+migrations applied: 1                           <-- _drizzle_migrations tracking rebuilt
+validateClusterKeys: OK                         <-- cluster_metadata was correctly dropped & re-initialized with test key fingerprints
+
+CONSTRAINTS SATISFIED
+---------------------
+- resetDatabase takes pool as a parameter; does NOT create its own pg.Pool.
+- No DB connection is attempted when TEST_DATABASE_URL is unset (hasTestDatabase=false, applyTestEncryptionEnv only sets env).
+- test-support subpath points at ./src/testSupport.ts (NOT dist/), loaded under tsx/esm.
+- testSupport.ts NOT added to the main "./" export (index.ts untouched).
+- Only testSupport.ts and database/package.json were modified.
+- Migrations dir resolved via new URL('../migrations', import.meta.url) => src/packages/database/migrations.

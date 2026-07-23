@@ -1,0 +1,14 @@
+ schemaname |      tablename       
+------------+----------------------
+ login      | job_outbox
+ login      | result_outbox
+ login      | task_secrets
+ login      | tasks
+ proxy      | accounts
+ sso        | budget_cache
+ sso        | emu_import_plan_rows
+ sso        | emu_import_plans
+ sso        | scim_rate_limits
+ sso        | users
+(10 rows)
+

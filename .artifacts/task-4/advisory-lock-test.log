@@ -1,0 +1,30 @@
+ lock_acquired 
+---------------
+ t
+(1 row)
+
+ lock_released 
+---------------
+ t
+(1 row)
+
+ first_lock 
+------------
+ t
+(1 row)
+
+ second_lock_should_fail 
+-------------------------
+ t
+(1 row)
+
+ pg_advisory_unlock 
+--------------------
+ t
+(1 row)
+
+ pg_advisory_unlock 
+--------------------
+ t
+(1 row)
+

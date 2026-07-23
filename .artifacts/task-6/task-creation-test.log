@@ -1,0 +1,9 @@
+INSERT 0 1
+INSERT 0 1
+       id        |      identity      | status  | task_generation | result_pending 
+-----------------+--------------------+---------+-----------------+----------------
+ test-task-login | testlogin@test.com | pending |               1 | f
+(1 row)
+
+DELETE 1
+DELETE 1

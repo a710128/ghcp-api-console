@@ -1,0 +1,24 @@
+ schemaname |      tablename       |              indexname              
+------------+----------------------+-------------------------------------
+ login      | job_outbox           | idx_login_job_outbox_state
+ login      | job_outbox           | job_outbox_pg_boss_key_key
+ login      | job_outbox           | job_outbox_pkey
+ login      | result_outbox        | idx_login_result_outbox_state
+ login      | result_outbox        | result_outbox_pkey
+ login      | task_secrets         | task_secrets_pkey
+ login      | tasks                | idx_login_tasks_identity_status
+ login      | tasks                | idx_login_tasks_status_created_at
+ login      | tasks                | tasks_pkey
+ proxy      | accounts             | accounts_pkey
+ proxy      | accounts             | idx_proxy_accounts_sso_user
+ sso        | budget_cache         | budget_cache_pkey
+ sso        | emu_import_plan_rows | emu_import_plan_rows_pkey
+ sso        | emu_import_plan_rows | idx_sso_emu_import_plan_rows_status
+ sso        | emu_import_plans     | emu_import_plans_pkey
+ sso        | emu_import_plans     | idx_sso_emu_import_plans_status
+ sso        | scim_rate_limits     | scim_rate_limits_pkey
+ sso        | users                | idx_sso_users_email
+ sso        | users                | idx_sso_users_gh_login
+ sso        | users                | users_pkey
+(20 rows)
+
