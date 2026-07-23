@@ -5,8 +5,8 @@ import { readAiCreditsUsage, refreshAiCreditsUsage } from '../budget/budgetServi
 export const budgetApiRouter = Router();
 const logger = loggerFor('sso', 'ai-credits-api');
 
-budgetApiRouter.get('/ai-credits/usage', (_req, res) => {
-  const usage = readAiCreditsUsage();
+budgetApiRouter.get('/ai-credits/usage', async (_req, res) => {
+  const usage = await readAiCreditsUsage();
   if (!usage) {
     res.status(404).json(apiError('ai_credits_usage_not_found', 'AI Credits usage cache was not found.'));
     return;

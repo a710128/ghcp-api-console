@@ -2,7 +2,6 @@ import 'dotenv/config';
 
 export interface SsoConfig {
   port: number;
-  dbPath: string;
   internalApiToken: string;
   baseUrl: string;
   proxyBaseUrl: string;
@@ -10,7 +9,6 @@ export interface SsoConfig {
   sessionSecret: string;
   emailDomain: string;
   userPrefix: string;
-  eventLogPath: string;
   enterpriseSlug: string;
   enterpriseShortcode: string;
   githubApiBaseUrl: string;
@@ -28,7 +26,6 @@ export interface SsoConfig {
 
 export const config: SsoConfig = {
   port: readPort(process.env.PORT, 7001),
-  dbPath: process.env.DB_PATH ?? './data/sso.sqlite',
   internalApiToken: process.env.INTERNAL_API_TOKEN ?? '',
   baseUrl: process.env.BASE_URL ?? 'http://localhost:7001',
   proxyBaseUrl: process.env.PROXY_BASE_URL ?? 'http://localhost:3000',
@@ -36,7 +33,6 @@ export const config: SsoConfig = {
   sessionSecret: process.env.SESSION_SECRET ?? 'dev-secret-change-me',
   emailDomain: process.env.SSO_EMAIL_DOMAIN ?? 'customsso.com',
   userPrefix: process.env.USER_PREFIX ?? 'user',
-  eventLogPath: process.env.SSO_USER_EVENTS_LOG ?? './data/sso-user-events.log',
   enterpriseSlug: process.env.ENTERPRISE_SLUG ?? 'acme',
   enterpriseShortcode: process.env.ENTERPRISE_SHORTCODE ?? 'octo',
   githubApiBaseUrl: process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com',

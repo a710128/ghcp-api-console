@@ -2,6 +2,7 @@ import { errorFields, loggerFor } from '@ghcp/shared';
 import { config } from '../config.js';
 import type { SsoUserRecord } from '../db/usersRepo.js';
 import { normalizeHandle } from './handle.js';
+import { reserveScimSlot } from './rateLimiter.js';
 
 const SCIM_USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
 const SCIM_PATCH_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:PatchOp';
@@ -164,12 +165,8 @@ async function scimFetch(path: string, init: RequestInit, operation: string): Pr
   throw lastError ?? new Error(`${operation} failed`);
 }
 
-let nextScimRequestAt = 0;
-
 async function waitForScimSlot(): Promise<void> {
-  const now = Date.now();
-  const waitMs = Math.max(0, nextScimRequestAt - now);
-  nextScimRequestAt = Math.max(now, nextScimRequestAt) + config.scimRequestDelayMs;
+  const waitMs = await reserveScimSlot(config.scimRequestDelayMs);
   if (waitMs > 0) await sleep(waitMs);
 }
 

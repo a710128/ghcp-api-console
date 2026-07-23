@@ -26,13 +26,15 @@ interface Period {
   month: number;
 }
 
-export function readAiCreditsUsage(now = new Date()): AiCreditsUsageDto | undefined {
+export async function readAiCreditsUsage(now = new Date()): Promise<AiCreditsUsageDto | undefined> {
   const current = currentPeriod(now);
   const last = previousPeriod(current);
-  const currentUsage = getAiCreditsUsagePeriod(current.year, current.month);
-  const lastUsage = getAiCreditsUsagePeriod(last.year, last.month);
+  const [currentUsage, lastUsage] = await Promise.all([
+    getAiCreditsUsagePeriod(current.year, current.month),
+    getAiCreditsUsagePeriod(last.year, last.month),
+  ]);
   if (!currentUsage || !lastUsage) return undefined;
-  return toUsageDto(lastUsage, currentUsage, now);
+  return await toUsageDto(lastUsage, currentUsage, now);
 }
 
 export async function refreshAiCreditsUsage(now = new Date()): Promise<AiCreditsUsageDto> {
@@ -42,7 +44,7 @@ export async function refreshAiCreditsUsage(now = new Date()): Promise<AiCredits
     fetchAndSaveAiCreditsUsage(last),
     fetchAndSaveAiCreditsUsage(current),
   ]);
-  return toUsageDto(lastUsage, currentUsage, now);
+  return await toUsageDto(lastUsage, currentUsage, now);
 }
 
 async function fetchAndSaveAiCreditsUsage(period: Period): Promise<AiCreditsUsageCacheRecord> {
@@ -67,13 +69,12 @@ async function fetchAndSaveAiCreditsUsage(period: Period): Promise<AiCreditsUsag
     month: rawJson.timePeriod?.month ?? period.month,
     quantity,
     unitType: items[0]?.unitType,
-    rawJson,
     fetchedAt: nowIso(),
   });
 }
 
-function toUsageDto(lastMonth: AiCreditsUsageCacheRecord, currentMonth: AiCreditsUsageCacheRecord, now: Date): AiCreditsUsageDto {
-  const assignedSeatCount = countAssignedCopilotSeats();
+async function toUsageDto(lastMonth: AiCreditsUsageCacheRecord, currentMonth: AiCreditsUsageCacheRecord, now: Date): Promise<AiCreditsUsageDto> {
+  const assignedSeatCount = await countAssignedCopilotSeats();
   return {
     enterprise: config.enterpriseSlug,
     lastMonth: toPeriodDto(lastMonth),

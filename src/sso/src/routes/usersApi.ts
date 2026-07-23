@@ -25,43 +25,42 @@ const EMU_IMPORT_ROW_STATUSES = new Set(['pending_create', 'pending_update', 'cr
 const SSO_USER_BATCH_OPERATIONS = new Set(['sync_emu', 'suspend_emu', 'delete_emu', 'delete_sso', 'assign_copilot', 'remove_copilot']);
 const logger = loggerFor('sso', 'users-api');
 
-usersApiRouter.post('/users/ensure', (req, res) => {
+usersApiRouter.post('/users/ensure', async (req, res) => {
   const { identity, preferredSsoUser } = req.body as { identity?: unknown; preferredSsoUser?: unknown };
   if (typeof identity !== 'string' || !identity.trim()) {
     res.status(400).json(apiError('invalid_identity', 'identity is required.'));
     return;
   }
-  res.json(ensureUser(identity, typeof preferredSsoUser === 'string' ? preferredSsoUser : undefined));
-});
-
-usersApiRouter.get('/users', (req, res) => {
-  res.json(
-    listUsers({
-      q: stringQuery(req.query.q),
-      page: numberQuery(req.query.page),
-      pageSize: numberQuery(req.query.pageSize),
-      sort: stringQuery(req.query.sort) as never,
-      dir: stringQuery(req.query.dir) as never,
-    }),
+  await sendAsync(res, 'ensure-user', { identity }, () =>
+    ensureUser(identity, typeof preferredSsoUser === 'string' ? preferredSsoUser : undefined)
   );
 });
 
-usersApiRouter.post('/users', (req, res) => {
-  try {
-    res.status(201).json(createSsoUser(req.body as { ssoUser: string; password?: string; email?: string; role?: 'user' | 'admin' }));
-  } catch (err) {
-    logger.error('create-user-failed', 'Create SSO user failed', { ...errorFields(err) });
-    res.status(400).json(apiError('create_user_failed', (err as Error).message));
-  }
+usersApiRouter.get('/users', async (req, res) => {
+  const result = await listUsers({
+    q: stringQuery(req.query.q),
+    page: numberQuery(req.query.page),
+    pageSize: numberQuery(req.query.pageSize),
+    sort: stringQuery(req.query.sort) as never,
+    dir: stringQuery(req.query.dir) as never,
+  });
+  res.json(result);
 });
 
-usersApiRouter.post('/users/import', (req, res) => {
+usersApiRouter.post('/users', async (req, res) => {
+  await sendAsync(res, 'create-user', {}, () =>
+    createSsoUser(req.body as { ssoUser: string; password?: string; email?: string; role?: 'user' | 'admin' }),
+    201
+  );
+});
+
+usersApiRouter.post('/users/import', async (req, res) => {
   const { csvText } = req.body as { csvText?: unknown };
   if (typeof csvText !== 'string' || !csvText.trim()) {
     res.status(400).json(apiError('invalid_import', 'csvText is required.'));
     return;
   }
-  res.json(importUsers(csvText));
+  await sendAsync(res, 'import-users', {}, () => importUsers(csvText));
 });
 
 usersApiRouter.post('/users/batch', async (req, res) => {
@@ -121,7 +120,7 @@ usersApiRouter.post('/users/emu/import/plans', async (req, res) => {
 });
 
 usersApiRouter.get('/users/emu/import/plans/:planId', async (req, res) => {
-  await sendAsync(res, 'get-emu-import-plan', { planId: req.params.planId }, () => Promise.resolve(getEmuImportPlan(req.params.planId)));
+  await sendAsync(res, 'get-emu-import-plan', { planId: req.params.planId }, () => getEmuImportPlan(req.params.planId));
 });
 
 usersApiRouter.get('/users/emu/import/plans/:planId/rows', async (req, res) => {
@@ -131,26 +130,25 @@ usersApiRouter.get('/users/emu/import/plans/:planId/rows', async (req, res) => {
     return;
   }
   const rowStatus = status as ImportEmuUserStatus | undefined;
-  await sendAsync(res, 'list-emu-import-plan-rows', { planId: req.params.planId, status }, () => Promise.resolve(listEmuImportPlanRows(req.params.planId, {
+  await sendAsync(res, 'list-emu-import-plan-rows', { planId: req.params.planId, status }, () => listEmuImportPlanRows(req.params.planId, {
     status: rowStatus,
     page: numberQuery(req.query.page),
     pageSize: numberQuery(req.query.pageSize),
-  })));
+  }));
 });
 
 usersApiRouter.post('/users/emu/import/plans/:planId/apply', async (req, res) => {
-  await sendAsync(res, 'apply-emu-import-plan', { planId: req.params.planId }, () => Promise.resolve(applyEmuImportPlan(req.params.planId)));
+  await sendAsync(res, 'apply-emu-import-plan', { planId: req.params.planId }, () => applyEmuImportPlan(req.params.planId));
 });
 
 usersApiRouter.delete('/users/emu/import/plans/:planId', async (req, res) => {
-  await sendAsync(res, 'delete-emu-import-plan', { planId: req.params.planId }, () => {
-    deleteEmuImportPlan(req.params.planId);
-    return Promise.resolve(undefined);
+  await sendAsync(res, 'delete-emu-import-plan', { planId: req.params.planId }, async () => {
+    await deleteEmuImportPlan(req.params.planId);
   }, 204);
 });
 
-usersApiRouter.get('/users/:ssoUser', (req, res) => {
-  const user = getUser(req.params.ssoUser);
+usersApiRouter.get('/users/:ssoUser', async (req, res) => {
+  const user = await getUser(req.params.ssoUser);
   if (!user) {
     res.status(404).json(apiError('user_not_found', 'SSO user was not found.'));
     return;
@@ -158,8 +156,8 @@ usersApiRouter.get('/users/:ssoUser', (req, res) => {
   res.json(toDto(user));
 });
 
-usersApiRouter.patch('/users/:ssoUser', (req, res) => {
-  const user = patchSsoUser(req.params.ssoUser, req.body as { password?: string; email?: string; role?: 'user' | 'admin' });
+usersApiRouter.patch('/users/:ssoUser', async (req, res) => {
+  const user = await patchSsoUser(req.params.ssoUser, req.body as { password?: string; email?: string; role?: 'user' | 'admin' });
   if (!user) {
     res.status(404).json(apiError('user_not_found', 'SSO user was not found.'));
     return;
