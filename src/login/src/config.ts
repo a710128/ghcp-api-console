@@ -2,7 +2,6 @@ import 'dotenv/config';
 
 export interface LoginConfig {
   port: number;
-  dbPath: string;
   internalApiToken: string;
   proxyBaseUrl: string;
   concurrency: number;
@@ -33,7 +32,6 @@ export interface AuthConfig {
 
 export const config: LoginConfig = {
   port: readPort(process.env.PORT, 7003),
-  dbPath: process.env.DB_PATH ?? './data/login.sqlite',
   internalApiToken: process.env.INTERNAL_API_TOKEN ?? '',
   proxyBaseUrl: process.env.PROXY_BASE_URL ?? 'http://localhost:3000',
   concurrency: readPositiveInteger(process.env.LOGIN_CONCURRENCY, 1),

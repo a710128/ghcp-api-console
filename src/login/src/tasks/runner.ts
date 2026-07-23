@@ -15,7 +15,7 @@ export interface RuntimeTaskPayload extends CreateLoginTaskRequest {
 
 export async function runLoginTask(task: LoginTaskRecord, payload: RuntimeTaskPayload): Promise<void> {
   const logger = AccountLogger.create(config.logDir, payload.ssoUser, config.auth.debugLogs);
-  markRunning(task.id, logger.path);
+  await markRunning(task.id, logger.path);
   stdoutLogger.info('running', 'Login task marked running', { taskId: task.id, identity: payload.identity, ssoUser: payload.ssoUser, ghLogin: payload.ghLogin, logPath: logger.path });
   try {
     if (!payload.ssoPassword) throw new Error('ssoPassword is required to run a login task.');
@@ -39,12 +39,12 @@ export async function runLoginTask(task: LoginTaskRecord, payload: RuntimeTaskPa
       logger,
     );
     await saveGithubToken(payload.identity, githubToken, payload.ghLogin);
-    markSuccess(task.id);
+    await markSuccess(task.id);
     logger.info('complete', 'Login task completed and token was written back to Proxy');
     stdoutLogger.info('success', 'Login task completed and token was written back to Proxy', { taskId: task.id, identity: payload.identity, ssoUser: payload.ssoUser, ghLogin: payload.ghLogin, logPath: logger.path });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    markFailed(task.id, message);
+    await markFailed(task.id, message);
     logger.error('failed', 'Login task failed', { error: message });
     stdoutLogger.error('failed', 'Login task failed', { taskId: task.id, identity: payload.identity, ssoUser: payload.ssoUser, ghLogin: payload.ghLogin, error: message, logPath: logger.path });
     throw err;
