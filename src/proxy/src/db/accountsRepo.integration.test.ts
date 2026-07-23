@@ -261,8 +261,8 @@ if (!hasTestDatabase()) {
       const dto = accountsRepo.toAccountDto(fresh);
       assert.equal(Object.prototype.hasOwnProperty.call(dto, 'ghToken'), false);
       assert.equal(Object.prototype.hasOwnProperty.call(dto, 'copilotToken'), false);
-      assert.equal((dto as Record<string, unknown>)['ghToken'], undefined);
-      assert.equal((dto as Record<string, unknown>)['copilotToken'], undefined);
+      assert.equal((dto as unknown as Record<string, unknown>)['ghToken'], undefined);
+      assert.equal((dto as unknown as Record<string, unknown>)['copilotToken'], undefined);
       // Non-secret status fields are preserved.
       assert.equal(dto.identity, 'kate');
       assert.equal(dto.ghTokenStatus, 'valid');
