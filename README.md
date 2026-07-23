@@ -234,6 +234,55 @@ npm --workspace @ghcp/console run build
 npm run start:console
 ```
 
+## 测试 / Testing
+
+### Unit tier（单元测试，无需外部服务）
+
+```bash
+# Run all workspaces unit tests
+npm test
+
+# Or run a single workspace
+npm --workspace @ghcp/shared run test
+npm --workspace @ghcp/proxy run test
+npm --workspace @ghcp/sso run test
+npm --workspace @ghcp/login run test
+npm --workspace @ghcp/database run test
+npm --workspace @ghcp/console run test
+```
+
+### Integration tier（集成测试，需要 PostgreSQL）
+
+```bash
+# Start the test database (Docker required)
+docker compose -f docker-compose.test.yml up -d postgres-test
+
+# Export the test database URL
+export TEST_DATABASE_URL=postgres://ghcp_test:ghcp_test_password@localhost:5433/ghcp_test
+
+# Run all integration tests
+npm run test:integration
+
+# Or run a single workspace
+npm --workspace @ghcp/database run test:integration
+npm --workspace @ghcp/proxy run test:integration
+npm --workspace @ghcp/sso run test:integration
+npm --workspace @ghcp/login run test:integration
+```
+
+Integration tests auto-skip when `TEST_DATABASE_URL` is not set.
+
+### Coverage report（覆盖率报告）
+
+```bash
+# Build deps first (required), then run unit tests with coverage
+npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build
+npm run test:coverage
+```
+
+Coverage target: ~80% line coverage on core logic (encryption, auth, repos, format utils).
+Excluded: React UI, Playwright login flow, wiring/entry files.
+
 ## 必须知道的限制
 
 - Copilot 后端不是正式公开的裸 API，一些模型能力、参数、流式格式或模型可见性可能与 OpenAI/Anthropic 官方 API 不完全一致。

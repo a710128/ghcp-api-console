@@ -1,0 +1,22 @@
+task-14-raise-unit-test-coverage evidence
+==========================================
+Date: Thu Jul 23 2026
+
+Verification results
+--------------------
+grep -c "test:integration" README.md  => 5  (requirement: >= 1) PASS
+grep "没有统一测试脚本" src/README.md   => (no output / STALE LINE REMOVED) PASS
+
+Changes made
+------------
+README.md:
+  - Added new "## 测试 / Testing" section before "## 必须知道的限制"
+  - Section covers: unit tier, integration tier (Docker + TEST_DATABASE_URL), coverage report
+  - Contains per-workspace npm commands and integration test auto-skip note
+
+src/README.md:
+  - Replaced stale line at line 344 (end of section "9. 构建与检查")
+  - Old: "当前各服务没有统一测试脚本；..."
+  - New: "各服务均有 `npm run test`（单元测试）和 `npm run test:integration`（集成测试，需 PostgreSQL）；根目录 `npm run test:coverage` 运行全量单元测试并报告覆盖率。..."
+
+No CI YAML files added. No source code modified. No new dependencies added.

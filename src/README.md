@@ -341,4 +341,4 @@ npm --workspace @ghcp/console run typecheck
 npm --workspace @ghcp/mock-github run typecheck
 ```
 
-当前各服务没有统一测试脚本；文档变更通常只需要检查 Markdown diff，代码变更至少运行受影响 workspace 的 typecheck。
+各服务均有 `npm run test`（单元测试）和 `npm run test:integration`（集成测试，需 PostgreSQL）；根目录 `npm run test:coverage` 运行全量单元测试并报告覆盖率。文档变更通常只需要检查 Markdown diff，代码变更至少运行受影响 workspace 的 typecheck。
