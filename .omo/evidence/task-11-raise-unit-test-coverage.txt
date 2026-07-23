@@ -1,0 +1,243 @@
+=== Task 11: SSO Postgres integration tests (usersRepo + emuImportPlansRepo) ===
+Date: 2026-07-23T04:53:10Z
+Node: v22.23.1
+
+Files created:
+  src/sso/src/db/usersRepo.integration.test.ts
+  src/sso/src/db/emuImportPlansRepo.integration.test.ts
+
+=== typecheck (npm --workspace @ghcp/sso run typecheck) ===
+TYPECHECK_EXIT=0 (tsc --noEmit clean)
+
+=== WITH TEST_DATABASE_URL set: test:integration ===
+TEST_DATABASE_URL=postgres://ghcp_test:ghcp_test_password@localhost:5433/ghcp_test
+EXIT_CODE=0
+
+
+> @ghcp/sso@0.1.0 test:integration
+> node --test --test-concurrency=1 --import tsx/esm "src/**/*.integration.test.ts"
+
+TAP version 13
+# Subtest: sso emuImportPlansRepo integration
+    # Subtest: createEmuImportPlanRecord creates a plan with rows and summary
+    ok 1 - createEmuImportPlanRecord creates a plan with rows and summary
+      ---
+      duration_ms: 47.723692
+      type: 'test'
+      ...
+    # Subtest: requireEmuImportPlan returns a known plan and throws on unknown id
+    ok 2 - requireEmuImportPlan returns a known plan and throws on unknown id
+      ---
+      duration_ms: 39.104687
+      type: 'test'
+      ...
+    # Subtest: listEmuImportPlanRows returns rows with pagination and status filter
+    ok 3 - listEmuImportPlanRows returns rows with pagination and status filter
+      ---
+      duration_ms: 61.019147
+      type: 'test'
+      ...
+    # Subtest: listPendingEmuImportPlanRows returns only pending rows
+    ok 4 - listPendingEmuImportPlanRows returns only pending rows
+      ---
+      duration_ms: 44.323562
+      type: 'test'
+      ...
+    # Subtest: updateEmuImportPlanRow updates a row
+    ok 5 - updateEmuImportPlanRow updates a row
+      ---
+      duration_ms: 40.84567
+      type: 'test'
+      ...
+    # Subtest: markEmuImportPlanApplied flips the plan to applied
+    ok 6 - markEmuImportPlanApplied flips the plan to applied
+      ---
+      duration_ms: 42.517284
+      type: 'test'
+      ...
+    # Subtest: deleteEmuImportPlanRecord removes a plan (and cascades rows)
+    ok 7 - deleteEmuImportPlanRecord removes a plan (and cascades rows)
+      ---
+      duration_ms: 40.8863
+      type: 'test'
+      ...
+    # Subtest: acquireApplyLease grants an exclusive lease
+    ok 8 - acquireApplyLease grants an exclusive lease
+      ---
+      duration_ms: 37.544009
+      type: 'test'
+      ...
+    # Subtest: a second acquireApplyLease while the first is held returns null
+    ok 9 - a second acquireApplyLease while the first is held returns null
+      ---
+      duration_ms: 36.002051
+      type: 'test'
+      ...
+    # Subtest: acquireApplyLease returns null for an unknown plan
+    ok 10 - acquireApplyLease returns null for an unknown plan
+      ---
+      duration_ms: 29.281968
+      type: 'test'
+      ...
+    # Subtest: releaseApplyLease frees the lease so it can be re-acquired
+    ok 11 - releaseApplyLease frees the lease so it can be re-acquired
+      ---
+      duration_ms: 46.979345
+      type: 'test'
+      ...
+    # Subtest: releaseApplyLease with a non-matching owner does not free the lease
+    ok 12 - releaseApplyLease with a non-matching owner does not free the lease
+      ---
+      duration_ms: 44.905171
+      type: 'test'
+      ...
+    1..12
+ok 1 - sso emuImportPlansRepo integration
+  ---
+  duration_ms: 698.862273
+  type: 'suite'
+  ...
+# Subtest: sso usersRepo integration
+    # Subtest: createUser inserts a user and returns the created record
+    ok 1 - createUser inserts a user and returns the created record
+      ---
+      duration_ms: 38.108767
+      type: 'test'
+      ...
+    # Subtest: createUser honors role and credentialSource
+    ok 2 - createUser honors role and credentialSource
+      ---
+      duration_ms: 31.334175
+      type: 'test'
+      ...
+    # Subtest: getUser returns a user by ssoUser (case-insensitive) and undefined for unknown
+    ok 3 - getUser returns a user by ssoUser (case-insensitive) and undefined for unknown
+      ---
+      duration_ms: 34.448241
+      type: 'test'
+      ...
+    # Subtest: getUserByGhLogin returns a user by ghLogin
+    ok 4 - getUserByGhLogin returns a user by ghLogin
+      ---
+      duration_ms: 34.485637
+      type: 'test'
+      ...
+    # Subtest: listUsers returns a page with items and total
+    ok 5 - listUsers returns a page with items and total
+      ---
+      duration_ms: 47.107394
+      type: 'test'
+      ...
+    # Subtest: listUsers respects pageSize pagination and search query
+    ok 6 - listUsers respects pageSize pagination and search query
+      ---
+      duration_ms: 38.716912
+      type: 'test'
+      ...
+    # Subtest: listAllUsers returns every user as records
+    ok 7 - listAllUsers returns every user as records
+      ---
+      duration_ms: 38.000449
+      type: 'test'
+      ...
+    # Subtest: updateUser updates fields and returns the updated record
+    ok 8 - updateUser updates fields and returns the updated record
+      ---
+      duration_ms: 36.713912
+      type: 'test'
+      ...
+    # Subtest: updateUser returns undefined for an unknown user
+    ok 9 - updateUser returns undefined for an unknown user
+      ---
+      duration_ms: 30.345037
+      type: 'test'
+      ...
+    # Subtest: updateEmu updates EMU status and gh identifiers
+    ok 10 - updateEmu updates EMU status and gh identifiers
+      ---
+      duration_ms: 36.25987
+      type: 'test'
+      ...
+    # Subtest: updateEmu throws for an unknown user
+    ok 11 - updateEmu throws for an unknown user
+      ---
+      duration_ms: 32.963769
+      type: 'test'
+      ...
+    # Subtest: updateCopilotSeat updates the copilot seat status
+    ok 12 - updateCopilotSeat updates the copilot seat status
+      ---
+      duration_ms: 35.740505
+      type: 'test'
+      ...
+    # Subtest: deleteUser removes the user
+    ok 13 - deleteUser removes the user
+      ---
+      duration_ms: 33.561099
+      type: 'test'
+      ...
+    # Subtest: toDto strips password material from a record
+    ok 14 - toDto strips password material from a record
+      ---
+      duration_ms: 31.735141
+      type: 'test'
+      ...
+    1..14
+ok 2 - sso usersRepo integration
+  ---
+  duration_ms: 674.38445
+  type: 'suite'
+  ...
+1..2
+# tests 26
+# suites 2
+# pass 26
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2048.447602
+
+=== WITHOUT TEST_DATABASE_URL: tests SKIP ===
+EXIT_CODE=0
+
+
+> @ghcp/sso@0.1.0 test:integration
+> node --test --test-concurrency=1 --import tsx/esm "src/**/*.integration.test.ts"
+
+TAP version 13
+# Subtest: sso emuImportPlansRepo integration (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.878572
+      type: 'test'
+      ...
+    1..1
+ok 1 - sso emuImportPlansRepo integration (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 2.113638
+  type: 'suite'
+  ...
+# Subtest: sso usersRepo integration (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.754884
+      type: 'test'
+      ...
+    1..1
+ok 2 - sso usersRepo integration (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 1.783099
+  type: 'suite'
+  ...
+1..2
+# tests 2
+# suites 2
+# pass 0
+# fail 0
+# cancelled 0
+# skipped 2
+# todo 0
+# duration_ms 676.507886
