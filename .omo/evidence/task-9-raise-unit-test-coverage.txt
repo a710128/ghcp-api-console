@@ -1,0 +1,223 @@
+==========================================================
+Task 9: @ghcp/database Postgres integration tests
+Date: Thu Jul 23 04:53:04 UTC 2026
+Node: v22.23.1
+==========================================================
+
+Files created:
+  src/packages/database/src/migrate.integration.test.ts
+  src/packages/database/src/keyFingerprint.integration.test.ts
+  src/packages/database/src/advisoryLock.integration.test.ts
+  src/packages/database/src/loginTask.integration.test.ts
+
+==========================================================
+typecheck (tsc --noEmit)
+==========================================================
+
+> @ghcp/database@0.1.0 typecheck
+> tsc --noEmit
+
+
+==========================================================
+RUN 1: WITH TEST_DATABASE_URL set -> tests execute, exit 0
+CMD: TEST_DATABASE_URL=postgres://ghcp_test:***@localhost:5433/ghcp_test npm --workspace @ghcp/database run test:integration
+==========================================================
+
+> @ghcp/database@0.1.0 test:integration
+> node --test --test-concurrency=1 --import tsx/esm "src/**/*.integration.test.ts"
+
+TAP version 13
+# Subtest: withPostgresAdvisoryLock integration
+    # Subtest: acquires the lock, runs the work function, and returns the result
+    ok 1 - acquires the lock, runs the work function, and returns the result
+      ---
+      duration_ms: 33.978976
+      type: 'test'
+      ...
+    # Subtest: returns lockAcquired=false when the same ns+key is already held
+    ok 2 - returns lockAcquired=false when the same ns+key is already held
+      ---
+      duration_ms: 14.538967
+      type: 'test'
+      ...
+    # Subtest: different keys do not collide (simultaneous acquires both succeed)
+    ok 3 - different keys do not collide (simultaneous acquires both succeed)
+      ---
+      duration_ms: 3.283952
+      type: 'test'
+      ...
+    1..3
+ok 1 - withPostgresAdvisoryLock integration
+  ---
+  duration_ms: 54.315451
+  type: 'suite'
+  ...
+# Subtest: validateClusterKeys integration
+    # Subtest: first run inserts the fingerprint row and succeeds
+    ok 1 - first run inserts the fingerprint row and succeeds
+      ---
+      duration_ms: 160.389129
+      type: 'test'
+      ...
+    # Subtest: second run with the same keys succeeds (matching fingerprints)
+    ok 2 - second run with the same keys succeeds (matching fingerprints)
+      ---
+      duration_ms: 123.934422
+      type: 'test'
+      ...
+    # Subtest: different DATA_ENCRYPTION_KEY after first insert throws a mismatch error
+    ok 3 - different DATA_ENCRYPTION_KEY after first insert throws a mismatch error
+      ---
+      duration_ms: 119.562494
+      type: 'test'
+      ...
+    # Subtest: different LOGIN_JOB_ENCRYPTION_KEY after first insert throws a mismatch error
+    ok 4 - different LOGIN_JOB_ENCRYPTION_KEY after first insert throws a mismatch error
+      ---
+      duration_ms: 127.736416
+      type: 'test'
+      ...
+    1..4
+ok 2 - validateClusterKeys integration
+  ---
+  duration_ms: 534.312028
+  type: 'suite'
+  ...
+# Subtest: createOrCoalesceLoginTaskTx integration
+    # Subtest: creates a new task on first call (created === true)
+    ok 1 - creates a new task on first call (created === true)
+      ---
+      duration_ms: 176.30627
+      type: 'test'
+      ...
+    # Subtest: coalesces to the existing task on a second call with the same identity (created === false)
+    ok 2 - coalesces to the existing task on a second call with the same identity (created === false)
+      ---
+      duration_ms: 122.489582
+      type: 'test'
+      ...
+    # Subtest: returned task carries the correct identity/ssoUser/ghLogin/ssoType
+    ok 3 - returned task carries the correct identity/ssoUser/ghLogin/ssoType
+      ---
+      duration_ms: 117.719865
+      type: 'test'
+      ...
+    1..3
+ok 3 - createOrCoalesceLoginTaskTx integration
+  ---
+  duration_ms: 420.032562
+  type: 'suite'
+  ...
+# Subtest: migrate integration
+    # Subtest: getMigrationVersion returns null on an empty database (before any migration)
+    ok 1 - getMigrationVersion returns null on an empty database (before any migration)
+      ---
+      duration_ms: 52.040429
+      type: 'test'
+      ...
+    # Subtest: runMigrations applies migrations and is idempotent
+    ok 2 - runMigrations applies migrations and is idempotent
+      ---
+      duration_ms: 103.646129
+      type: 'test'
+      ...
+    # Subtest: _drizzle_migrations table has rows after migration
+    ok 3 - _drizzle_migrations table has rows after migration
+      ---
+      duration_ms: 110.291461
+      type: 'test'
+      ...
+    # Subtest: getMigrationVersion returns a non-null migration hash after migration
+    ok 4 - getMigrationVersion returns a non-null migration hash after migration
+      ---
+      duration_ms: 160.113728
+      type: 'test'
+      ...
+    1..4
+ok 4 - migrate integration
+  ---
+  duration_ms: 431.03127
+  type: 'suite'
+  ...
+1..4
+# tests 14
+# suites 4
+# pass 14
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2581.355721
+RUN 1 EXIT=0
+
+==========================================================
+RUN 2: WITHOUT TEST_DATABASE_URL -> tests SKIP (not fail), exit 0
+CMD: npm --workspace @ghcp/database run test:integration
+==========================================================
+
+> @ghcp/database@0.1.0 test:integration
+> node --test --test-concurrency=1 --import tsx/esm "src/**/*.integration.test.ts"
+
+TAP version 13
+# Subtest: advisoryLock integration tests (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.61514
+      type: 'test'
+      ...
+    1..1
+ok 1 - advisoryLock integration tests (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 1.541799
+  type: 'suite'
+  ...
+# Subtest: keyFingerprint integration tests (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.891013
+      type: 'test'
+      ...
+    1..1
+ok 2 - keyFingerprint integration tests (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 2.157265
+  type: 'suite'
+  ...
+# Subtest: loginTask integration tests (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.95328
+      type: 'test'
+      ...
+    1..1
+ok 3 - loginTask integration tests (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 2.247608
+  type: 'suite'
+  ...
+# Subtest: migrate integration tests (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.917072
+      type: 'test'
+      ...
+    1..1
+ok 4 - migrate integration tests (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 2.258117
+  type: 'suite'
+  ...
+1..4
+# tests 4
+# suites 4
+# pass 0
+# fail 0
+# cancelled 0
+# skipped 4
+# todo 0
+# duration_ms 1248.784952
+RUN 2 EXIT=0
