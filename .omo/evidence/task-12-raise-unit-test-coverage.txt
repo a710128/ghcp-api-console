@@ -1,0 +1,247 @@
+=== Task 12: Login Postgres integration tests (tasksRepo + queue) ===
+Date: 2026-07-23T04:54:47Z
+Node: v22.23.1
+
+Files created:
+  src/login/src/db/tasksRepo.integration.test.ts
+  src/login/src/db/queue.integration.test.ts
+
+=== typecheck (npm --workspace @ghcp/login run typecheck) ===
+TYPECHECK_EXIT=0 (tsc --noEmit clean)
+
+=== WITH TEST_DATABASE_URL set: test:integration ===
+TEST_DATABASE_URL=postgres://ghcp_test:ghcp_test_password@localhost:5433/ghcp_test
+EXIT_CODE=0
+
+
+> @ghcp/login@0.1.0 test:integration
+> node --test --test-concurrency=1 --import tsx/esm "src/**/*.integration.test.ts"
+
+TAP version 13
+# 2026-07-23T04:54:51.255Z [login:queue] INFO enqueue: Created new durable login task {"taskId":"41d26ce1-38f8-498a-b161-315f14ee3a05","identity":"enq-1","ssoUser":"queue-sso","taskGeneration":"1"}
+# Subtest: login queue integration
+    # Subtest: enqueueLoginTask creates a pending task plus job_outbox and task_secrets rows
+    ok 1 - enqueueLoginTask creates a pending task plus job_outbox and task_secrets rows
+      ---
+      duration_ms: 58.343983
+      type: 'test'
+      ...
+# 2026-07-23T04:54:51.307Z [login:queue] INFO enqueue: Created new durable login task {"taskId":"6395aa29-df1e-4148-83e9-b787f9ac4516","identity":"coalesce-1","ssoUser":"queue-sso","taskGeneration":"1"}
+# 2026-07-23T04:54:51.309Z [login:queue] INFO enqueue-coalesced: Returning existing active task (duplicate request) {"taskId":"6395aa29-df1e-4148-83e9-b787f9ac4516","identity":"coalesce-1","status":"pending"}
+    # Subtest: second enqueueLoginTask for the same identity coalesces (no duplicate task)
+    ok 2 - second enqueueLoginTask for the same identity coalesces (no duplicate task)
+      ---
+      duration_ms: 51.347289
+      type: 'test'
+      ...
+# 2026-07-23T04:54:51.355Z [login:queue] INFO enqueue: Created new durable login task {"taskId":"813785cc-31c9-44b7-beea-d03eecab36b5","identity":"cancel-q-1","ssoUser":"queue-sso","taskGeneration":"1"}
+# 2026-07-23T04:54:51.359Z [login:queue] INFO cancel: Cancelled login task {"taskId":"813785cc-31c9-44b7-beea-d03eecab36b5","status":"cancelled"}
+    # Subtest: cancelLoginTask cancels a pending task
+    ok 3 - cancelLoginTask cancels a pending task
+      ---
+      duration_ms: 47.818359
+      type: 'test'
+      ...
+# 2026-07-23T04:54:51.394Z [login:queue] INFO cancel: Cancelled login task {"taskId":"00000000-0000-0000-0000-000000000000"}
+    # Subtest: cancelLoginTask on unknown id returns undefined
+    ok 4 - cancelLoginTask on unknown id returns undefined
+      ---
+      duration_ms: 34.605653
+      type: 'test'
+      ...
+# 2026-07-23T04:54:51.441Z [login:queue] INFO enqueue: Created new durable login task {"taskId":"b31d2260-7040-4e66-989b-1ff8e5d0fc99","identity":"retry-1","ssoUser":"queue-sso","taskGeneration":"1"}
+# 2026-07-23T04:54:51.449Z [login:queue] INFO enqueue: Created new durable login task {"taskId":"aeb5c799-1df1-4c45-a269-0984cb1d2758","identity":"retry-1","ssoUser":"queue-sso","taskGeneration":"2"}
+    # Subtest: retryLoginTask provisions a new attempt from a finished task
+    ok 5 - retryLoginTask provisions a new attempt from a finished task
+      ---
+      duration_ms: 57.21908
+      type: 'test'
+      ...
+# 2026-07-23T04:54:51.498Z [login:queue] INFO enqueue: Created new durable login task {"taskId":"39cb2322-113a-46b3-9f6f-f5d041112ec0","identity":"retry-coalesce-1","ssoUser":"queue-sso","taskGeneration":"1"}
+# 2026-07-23T04:54:51.501Z [login:queue] INFO enqueue-coalesced: Returning existing active task (duplicate request) {"taskId":"39cb2322-113a-46b3-9f6f-f5d041112ec0","identity":"retry-coalesce-1","status":"pending"}
+    # Subtest: retryLoginTask coalesces onto an active (pending) task instead of duplicating
+    ok 6 - retryLoginTask coalesces onto an active (pending) task instead of duplicating
+      ---
+      duration_ms: 51.018343
+      type: 'test'
+      ...
+    1..6
+ok 1 - login queue integration
+  ---
+  duration_ms: 487.496409
+  type: 'suite'
+  ...
+# Subtest: login tasksRepo integration
+    # Subtest: createTask creates a pending task with generation 1
+    ok 1 - createTask creates a pending task with generation 1
+      ---
+      duration_ms: 47.527627
+      type: 'test'
+      ...
+    # Subtest: createTask increments task_generation per identity
+    ok 2 - createTask increments task_generation per identity
+      ---
+      duration_ms: 45.680617
+      type: 'test'
+      ...
+    # Subtest: getTask returns the created task and undefined for unknown id
+    ok 3 - getTask returns the created task and undefined for unknown id
+      ---
+      duration_ms: 38.140159
+      type: 'test'
+      ...
+    # Subtest: listTasks returns an array of tasks ordered newest first
+    ok 4 - listTasks returns an array of tasks ordered newest first
+      ---
+      duration_ms: 39.572977
+      type: 'test'
+      ...
+    # Subtest: listTasksPage returns { items, total, page, pageSize }
+    ok 5 - listTasksPage returns { items, total, page, pageSize }
+      ---
+      duration_ms: 45.257785
+      type: 'test'
+      ...
+    # Subtest: listTasksPage filters by status
+    ok 6 - listTasksPage filters by status
+      ---
+      duration_ms: 48.77938
+      type: 'test'
+      ...
+    # Subtest: claimTask marks a pending task as running and returns an attempt token
+    ok 7 - claimTask marks a pending task as running and returns an attempt token
+      ---
+      duration_ms: 37.860031
+      type: 'test'
+      ...
+    # Subtest: second claimTask on the same task returns null (already claimed)
+    ok 8 - second claimTask on the same task returns null (already claimed)
+      ---
+      duration_ms: 40.324563
+      type: 'test'
+      ...
+    # Subtest: claimTask is single-winner for concurrent claims
+    ok 9 - claimTask is single-winner for concurrent claims
+      ---
+      duration_ms: 49.795814
+      type: 'test'
+      ...
+    # Subtest: markRunning transitions a task to running
+    ok 10 - markRunning transitions a task to running
+      ---
+      duration_ms: 39.024335
+      type: 'test'
+      ...
+    # Subtest: markSuccess transitions a task to success
+    ok 11 - markSuccess transitions a task to success
+      ---
+      duration_ms: 42.292985
+      type: 'test'
+      ...
+    # Subtest: markSuccess with wrong attempt token does not transition (fencing)
+    ok 12 - markSuccess with wrong attempt token does not transition (fencing)
+      ---
+      duration_ms: 44.950813
+      type: 'test'
+      ...
+    # Subtest: markFailed transitions a task to failed with a reason
+    ok 13 - markFailed transitions a task to failed with a reason
+      ---
+      duration_ms: 43.417692
+      type: 'test'
+      ...
+    # Subtest: markCancelled transitions a pending task to cancelled
+    ok 14 - markCancelled transitions a pending task to cancelled
+      ---
+      duration_ms: 39.705352
+      type: 'test'
+      ...
+    # Subtest: markCancelled does not overwrite an already-success task (guarded)
+    ok 15 - markCancelled does not overwrite an already-success task (guarded)
+      ---
+      duration_ms: 40.945855
+      type: 'test'
+      ...
+    # Subtest: markCancelled does not overwrite an already-failed task (guarded)
+    ok 16 - markCancelled does not overwrite an already-failed task (guarded)
+      ---
+      duration_ms: 42.319145
+      type: 'test'
+      ...
+    # Subtest: getActiveTaskForIdentity returns pending/running tasks and undefined otherwise
+    ok 17 - getActiveTaskForIdentity returns pending/running tasks and undefined otherwise
+      ---
+      duration_ms: 49.454882
+      type: 'test'
+      ...
+    # Subtest: recoverResultPendingTasks marks stuck result-pending success tasks as failed (does NOT re-queue)
+    ok 18 - recoverResultPendingTasks marks stuck result-pending success tasks as failed (does NOT re-queue)
+      ---
+      duration_ms: 45.417696
+      type: 'test'
+      ...
+    # Subtest: recoverResultPendingTasks leaves recent result-pending success tasks untouched
+    ok 19 - recoverResultPendingTasks leaves recent result-pending success tasks untouched
+      ---
+      duration_ms: 48.832599
+      type: 'test'
+      ...
+    1..19
+ok 2 - login tasksRepo integration
+  ---
+  duration_ms: 1028.003901
+  type: 'suite'
+  ...
+1..2
+# tests 25
+# suites 2
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2225.149574
+
+=== WITHOUT TEST_DATABASE_URL: tests SKIP ===
+EXIT_CODE=0
+
+
+> @ghcp/login@0.1.0 test:integration
+> node --test --test-concurrency=1 --import tsx/esm "src/**/*.integration.test.ts"
+
+TAP version 13
+# Subtest: login queue integration (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.642588
+      type: 'test'
+      ...
+    1..1
+ok 1 - login queue integration (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 1.536218
+  type: 'suite'
+  ...
+# Subtest: login tasksRepo integration (skipped: no TEST_DATABASE_URL)
+    # Subtest: skip
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+      ---
+      duration_ms: 0.669842
+      type: 'test'
+      ...
+    1..1
+ok 2 - login tasksRepo integration (skipped: no TEST_DATABASE_URL)
+  ---
+  duration_ms: 1.528392
+  type: 'suite'
+  ...
+1..2
+# tests 2
+# suites 2
+# pass 0
+# fail 0
+# cancelled 0
+# skipped 2
+# todo 0
+# duration_ms 665.848232
