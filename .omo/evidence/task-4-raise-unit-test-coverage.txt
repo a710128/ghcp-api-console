@@ -1,0 +1,613 @@
+
+> @ghcp/proxy@0.1.0 pretest
+> npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build
+
+
+> @ghcp/shared@0.1.0 build
+> tsc
+
+
+> @ghcp/database@0.1.0 build
+> tsc
+
+
+> @ghcp/proxy@0.1.0 test
+> node --test --import tsx/esm "src/**/*.unit.test.ts"
+
+TAP version 13
+# Subtest: config defaults
+    # Subtest: applies documented defaults when optional vars are missing
+    ok 1 - applies documented defaults when optional vars are missing
+      ---
+      duration_ms: 19.507438
+      type: 'test'
+      ...
+    # Subtest: populates default editor headers
+    ok 2 - populates default editor headers
+      ---
+      duration_ms: 14.672535
+      type: 'test'
+      ...
+    1..2
+ok 1 - config defaults
+  ---
+  duration_ms: 35.832046
+  type: 'suite'
+  ...
+# Subtest: config overrides
+    # Subtest: honors provided values
+    ok 1 - honors provided values
+      ---
+      duration_ms: 8.528578
+      type: 'test'
+      ...
+    1..1
+ok 2 - config overrides
+  ---
+  duration_ms: 8.829106
+  type: 'suite'
+  ...
+# Subtest: config validation errors
+    # Subtest: throws on a non-numeric PORT
+    ok 1 - throws on a non-numeric PORT
+      ---
+      duration_ms: 7.412049
+      type: 'test'
+      ...
+    # Subtest: throws on an out-of-range PORT
+    ok 2 - throws on an out-of-range PORT
+      ---
+      duration_ms: 4.148256
+      type: 'test'
+      ...
+    # Subtest: throws on an invalid boolean CLAUDE_CODE_OPTIMIZED
+    ok 3 - throws on an invalid boolean CLAUDE_CODE_OPTIMIZED
+      ---
+      duration_ms: 4.617515
+      type: 'test'
+      ...
+    # Subtest: throws on a non-positive REQUEST_STATS_PER_ACCOUNT_LIMIT
+    ok 4 - throws on a non-positive REQUEST_STATS_PER_ACCOUNT_LIMIT
+      ---
+      duration_ms: 4.069821
+      type: 'test'
+      ...
+    1..4
+ok 3 - config validation errors
+  ---
+  duration_ms: 20.846908
+  type: 'suite'
+  ...
+# Subtest: crypto.buildAad
+    # Subtest: returns a canonical Buffer with \\x00 separators
+    ok 1 - returns a canonical Buffer with \\x00 separators
+      ---
+      duration_ms: 1.314114
+      type: 'test'
+      ...
+    # Subtest: defaults payloadVersion to "1"
+    ok 2 - defaults payloadVersion to "1"
+      ---
+      duration_ms: 0.241062
+      type: 'test'
+      ...
+    # Subtest: embeds the given values into the canonical string
+    ok 3 - embeds the given values into the canonical string
+      ---
+      duration_ms: 0.339619
+      type: 'test'
+      ...
+    1..3
+ok 4 - crypto.buildAad
+  ---
+  duration_ms: 3.377216
+  type: 'suite'
+  ...
+# Subtest: crypto encrypt/decrypt round-trip
+    # Subtest: decrypts back to the original plaintext
+    ok 1 - decrypts back to the original plaintext
+      ---
+      duration_ms: 1.868427
+      type: 'test'
+      ...
+    # Subtest: round-trips unicode plaintext
+    ok 2 - round-trips unicode plaintext
+      ---
+      duration_ms: 0.611653
+      type: 'test'
+      ...
+    # Subtest: uses a 12-byte (24 hex chars) nonce
+    ok 3 - uses a 12-byte (24 hex chars) nonce
+      ---
+      duration_ms: 0.378167
+      type: 'test'
+      ...
+    1..3
+ok 5 - crypto encrypt/decrypt round-trip
+  ---
+  duration_ms: 3.219296
+  type: 'suite'
+  ...
+# Subtest: crypto encrypt key-length validation
+    # Subtest: throws when encrypt key is 16 bytes
+    ok 1 - throws when encrypt key is 16 bytes
+      ---
+      duration_ms: 0.960475
+      type: 'test'
+      ...
+    # Subtest: throws when decrypt key is not 32 bytes
+    ok 2 - throws when decrypt key is not 32 bytes
+      ---
+      duration_ms: 0.359533
+      type: 'test'
+      ...
+    1..2
+ok 6 - crypto encrypt key-length validation
+  ---
+  duration_ms: 1.815248
+  type: 'suite'
+  ...
+# Subtest: crypto authentication failures
+    # Subtest: throws when cipher bytes are tampered
+    ok 1 - throws when cipher bytes are tampered
+      ---
+      duration_ms: 0.673983
+      type: 'test'
+      ...
+    # Subtest: throws when decrypting with the wrong key
+    ok 2 - throws when decrypting with the wrong key
+      ---
+      duration_ms: 0.849263
+      type: 'test'
+      ...
+    # Subtest: throws when decrypting with the wrong AAD
+    ok 3 - throws when decrypting with the wrong AAD
+      ---
+      duration_ms: 0.481483
+      type: 'test'
+      ...
+    1..3
+ok 7 - crypto authentication failures
+  ---
+  duration_ms: 2.261144
+  type: 'suite'
+  ...
+# Subtest: normalizeAnthropicModelId
+    # Subtest: strips a date suffix and merges the version numbers
+    ok 1 - strips a date suffix and merges the version numbers
+      ---
+      duration_ms: 1.706567
+      type: 'test'
+      ...
+    # Subtest: merges adjacent version numbers without a date suffix
+    ok 2 - merges adjacent version numbers without a date suffix
+      ---
+      duration_ms: 0.268338
+      type: 'test'
+      ...
+    # Subtest: leaves an already-normalized id unchanged
+    ok 3 - leaves an already-normalized id unchanged
+      ---
+      duration_ms: 0.33072
+      type: 'test'
+      ...
+    # Subtest: strips a date suffix from an already-dotted id
+    ok 4 - strips a date suffix from an already-dotted id
+      ---
+      duration_ms: 0.208685
+      type: 'test'
+      ...
+    # Subtest: leaves a single-token id unchanged
+    ok 5 - leaves a single-token id unchanged
+      ---
+      duration_ms: 0.195286
+      type: 'test'
+      ...
+    1..5
+ok 8 - normalizeAnthropicModelId
+  ---
+  duration_ms: 4.429802
+  type: 'suite'
+  ...
+# Subtest: getAnthropicModelProfile: claude-sonnet-4.6
+    # Subtest: returns the all-thinking profile with matching canonicalId
+    ok 1 - returns the all-thinking profile with matching canonicalId
+      ---
+      duration_ms: 1.280062
+      type: 'test'
+      ...
+    # Subtest: normalizes a dated id to the same profile
+    ok 2 - normalizes a dated id to the same profile
+      ---
+      duration_ms: 0.37753
+      type: 'test'
+      ...
+    1..2
+ok 9 - getAnthropicModelProfile: claude-sonnet-4.6
+  ---
+  duration_ms: 2.113545
+  type: 'suite'
+  ...
+# Subtest: getAnthropicModelProfile: claude-opus-4.8
+    # Subtest: returns an adaptive-only profile with matching canonicalId
+    ok 1 - returns an adaptive-only profile with matching canonicalId
+      ---
+      duration_ms: 0.264028
+      type: 'test'
+      ...
+    # Subtest: resolves via the raw dated/hyphenated id form
+    ok 2 - resolves via the raw dated/hyphenated id form
+      ---
+      duration_ms: 0.312903
+      type: 'test'
+      ...
+    1..2
+ok 10 - getAnthropicModelProfile: claude-opus-4.8
+  ---
+  duration_ms: 1.180426
+  type: 'suite'
+  ...
+# Subtest: getAnthropicModelProfile: fallback rules
+    # Subtest: falls back to enabled-only for a haiku model
+    ok 1 - falls back to enabled-only for a haiku model
+      ---
+      duration_ms: 0.548714
+      type: 'test'
+      ...
+    # Subtest: falls back to all-thinking for an unknown non-special model
+    ok 2 - falls back to all-thinking for an unknown non-special model
+      ---
+      duration_ms: 0.47294
+      type: 'test'
+      ...
+    1..2
+ok 11 - getAnthropicModelProfile: fallback rules
+  ---
+  duration_ms: 1.193025
+  type: 'suite'
+  ...
+# Subtest: estimateInputTokens
+    # Subtest: estimates ceil(JSON length / 4) tokens for a messages body
+    ok 1 - estimates ceil(JSON length / 4) tokens for a messages body
+      ---
+      duration_ms: 1.148746
+      type: 'test'
+      ...
+    # Subtest: returns at least 1 token for a tiny body
+    ok 2 - returns at least 1 token for a tiny body
+      ---
+      duration_ms: 0.261052
+      type: 'test'
+      ...
+    # Subtest: grows with larger bodies
+    ok 3 - grows with larger bodies
+      ---
+      duration_ms: 0.228793
+      type: 'test'
+      ...
+    1..3
+ok 12 - estimateInputTokens
+  ---
+  duration_ms: 2.932119
+  type: 'suite'
+  ...
+# Subtest: isTokenCountFallbackStatus
+    # Subtest: returns true for 404
+    ok 1 - returns true for 404
+      ---
+      duration_ms: 0.305216
+      type: 'test'
+      ...
+    # Subtest: returns true for 405
+    ok 2 - returns true for 405
+      ---
+      duration_ms: 0.200308
+      type: 'test'
+      ...
+    # Subtest: returns true for 501
+    ok 3 - returns true for 501
+      ---
+      duration_ms: 0.169273
+      type: 'test'
+      ...
+    # Subtest: returns false for 400
+    ok 4 - returns false for 400
+      ---
+      duration_ms: 0.265279
+      type: 'test'
+      ...
+    # Subtest: returns false for 200
+    ok 5 - returns false for 200
+      ---
+      duration_ms: 0.43817
+      type: 'test'
+      ...
+    1..5
+ok 13 - isTokenCountFallbackStatus
+  ---
+  duration_ms: 2.028426
+  type: 'suite'
+  ...
+# Subtest: shouldTranslateWebSearchError
+    # Subtest: returns true for a web-search request with a matching upstream error
+    ok 1 - returns true for a web-search request with a matching upstream error
+      ---
+      duration_ms: 0.625585
+      type: 'test'
+      ...
+    # Subtest: returns true for a web_search_* tool with an unsupported_value error at 404
+    ok 2 - returns true for a web_search_* tool with an unsupported_value error at 404
+      ---
+      duration_ms: 0.505644
+      type: 'test'
+      ...
+    # Subtest: returns false when the request has no web-search tool
+    ok 3 - returns false when the request has no web-search tool
+      ---
+      duration_ms: 0.201757
+      type: 'test'
+      ...
+    # Subtest: returns false when requestBody is undefined
+    ok 4 - returns false when requestBody is undefined
+      ---
+      duration_ms: 0.109887
+      type: 'test'
+      ...
+    # Subtest: returns false when the status is not 400/404
+    ok 5 - returns false when the status is not 400/404
+      ---
+      duration_ms: 0.099103
+      type: 'test'
+      ...
+    # Subtest: returns false when the body text does not mention web search
+    ok 6 - returns false when the body text does not mention web search
+      ---
+      duration_ms: 0.088019
+      type: 'test'
+      ...
+    1..6
+ok 14 - shouldTranslateWebSearchError
+  ---
+  duration_ms: 1.959661
+  type: 'suite'
+  ...
+# Subtest: webSearchUnsupportedMessage
+    # Subtest: is a non-empty string
+    ok 1 - is a non-empty string
+      ---
+      duration_ms: 0.191282
+      type: 'test'
+      ...
+    # Subtest: mentions the offending tool type
+    ok 2 - mentions the offending tool type
+      ---
+      duration_ms: 0.103998
+      type: 'test'
+      ...
+    # Subtest: falls back to web_search when no tool is present
+    ok 3 - falls back to web_search when no tool is present
+      ---
+      duration_ms: 0.198043
+      type: 'test'
+      ...
+    1..3
+ok 15 - webSearchUnsupportedMessage
+  ---
+  duration_ms: 0.639107
+  type: 'suite'
+  ...
+# Subtest: preprocessClaudeCodeMessagesBody: cache_control.scope removal
+    # Subtest: removes cache_control.scope from message content blocks
+    ok 1 - removes cache_control.scope from message content blocks
+      ---
+      duration_ms: 1.472856
+      type: 'test'
+      ...
+    # Subtest: does not mutate the original body
+    ok 2 - does not mutate the original body
+      ---
+      duration_ms: 0.330704
+      type: 'test'
+      ...
+    1..2
+ok 16 - preprocessClaudeCodeMessagesBody: cache_control.scope removal
+  ---
+  duration_ms: 1.970871
+  type: 'suite'
+  ...
+# Subtest: preprocessClaudeCodeMessagesBody: currentDate block removal
+    # Subtest: removes the injected \# currentDate block from system text
+    ok 1 - removes the injected \# currentDate block from system text
+      ---
+      duration_ms: 0.270334
+      type: 'test'
+      ...
+    1..1
+ok 17 - preprocessClaudeCodeMessagesBody: currentDate block removal
+  ---
+  duration_ms: 0.359359
+  type: 'suite'
+  ...
+# Subtest: preprocessClaudeCodeMessagesBody: "Tool loaded." boundary removal
+    # Subtest: removes text blocks that are exactly the Tool loaded. marker
+    ok 1 - removes text blocks that are exactly the Tool loaded. marker
+      ---
+      duration_ms: 0.31366
+      type: 'test'
+      ...
+    1..1
+ok 18 - preprocessClaudeCodeMessagesBody: "Tool loaded." boundary removal
+  ---
+  duration_ms: 0.43539
+  type: 'suite'
+  ...
+# Subtest: preprocessClaudeCodeMessagesBody: trailing assistant message
+    # Subtest: appends a "Please continue." user message after a trailing assistant message
+    ok 1 - appends a "Please continue." user message after a trailing assistant message
+      ---
+      duration_ms: 3.908403
+      type: 'test'
+      ...
+    # Subtest: does not append when the last message is already from the user
+    ok 2 - does not append when the last message is already from the user
+      ---
+      duration_ms: 0.227714
+      type: 'test'
+      ...
+    1..2
+ok 19 - preprocessClaudeCodeMessagesBody: trailing assistant message
+  ---
+  duration_ms: 4.290642
+  type: 'suite'
+  ...
+# Subtest: resolveClaudeCodeOptimized: missing header
+    # Subtest: returns the config default when header is undefined
+    ok 1 - returns the config default when header is undefined
+      ---
+      duration_ms: 2.074072
+      type: 'test'
+      ...
+    1..1
+ok 20 - resolveClaudeCodeOptimized: missing header
+  ---
+  duration_ms: 25.620753
+  type: 'suite'
+  ...
+# Subtest: resolveClaudeCodeOptimized: truthy values
+    # Subtest: treats "true" as enabled=true
+    ok 1 - treats "true" as enabled=true
+      ---
+      duration_ms: 0.693011
+      type: 'test'
+      ...
+    # Subtest: treats "1" as enabled=true
+    ok 2 - treats "1" as enabled=true
+      ---
+      duration_ms: 0.208126
+      type: 'test'
+      ...
+    # Subtest: treats "yes" as enabled=true
+    ok 3 - treats "yes" as enabled=true
+      ---
+      duration_ms: 0.189909
+      type: 'test'
+      ...
+    # Subtest: treats "on" as enabled=true
+    ok 4 - treats "on" as enabled=true
+      ---
+      duration_ms: 0.178277
+      type: 'test'
+      ...
+    # Subtest: treats "TRUE" as enabled=true
+    ok 5 - treats "TRUE" as enabled=true
+      ---
+      duration_ms: 0.353004
+      type: 'test'
+      ...
+    # Subtest: treats "Yes" as enabled=true
+    ok 6 - treats "Yes" as enabled=true
+      ---
+      duration_ms: 0.319087
+      type: 'test'
+      ...
+    # Subtest: treats "ON" as enabled=true
+    ok 7 - treats "ON" as enabled=true
+      ---
+      duration_ms: 0.346222
+      type: 'test'
+      ...
+    # Subtest: treats " true " as enabled=true
+    ok 8 - treats " true " as enabled=true
+      ---
+      duration_ms: 0.523888
+      type: 'test'
+      ...
+    1..8
+ok 21 - resolveClaudeCodeOptimized: truthy values
+  ---
+  duration_ms: 3.85583
+  type: 'suite'
+  ...
+# Subtest: resolveClaudeCodeOptimized: falsy values
+    # Subtest: treats "false" as enabled=false
+    ok 1 - treats "false" as enabled=false
+      ---
+      duration_ms: 0.477068
+      type: 'test'
+      ...
+    # Subtest: treats "0" as enabled=false
+    ok 2 - treats "0" as enabled=false
+      ---
+      duration_ms: 0.168145
+      type: 'test'
+      ...
+    # Subtest: treats "no" as enabled=false
+    ok 3 - treats "no" as enabled=false
+      ---
+      duration_ms: 0.132701
+      type: 'test'
+      ...
+    # Subtest: treats "off" as enabled=false
+    ok 4 - treats "off" as enabled=false
+      ---
+      duration_ms: 0.130277
+      type: 'test'
+      ...
+    # Subtest: treats "FALSE" as enabled=false
+    ok 5 - treats "FALSE" as enabled=false
+      ---
+      duration_ms: 0.131768
+      type: 'test'
+      ...
+    # Subtest: treats "No" as enabled=false
+    ok 6 - treats "No" as enabled=false
+      ---
+      duration_ms: 0.117139
+      type: 'test'
+      ...
+    # Subtest: treats "OFF" as enabled=false
+    ok 7 - treats "OFF" as enabled=false
+      ---
+      duration_ms: 0.108406
+      type: 'test'
+      ...
+    # Subtest: treats " off " as enabled=false
+    ok 8 - treats " off " as enabled=false
+      ---
+      duration_ms: 0.142877
+      type: 'test'
+      ...
+    1..8
+ok 22 - resolveClaudeCodeOptimized: falsy values
+  ---
+  duration_ms: 1.892886
+  type: 'suite'
+  ...
+# Subtest: resolveClaudeCodeOptimized: invalid values
+    # Subtest: returns an error for "maybe"
+    ok 1 - returns an error for "maybe"
+      ---
+      duration_ms: 2.002008
+      type: 'test'
+      ...
+    # Subtest: returns an error for an empty-string header
+    ok 2 - returns an error for an empty-string header
+      ---
+      duration_ms: 0.23342
+      type: 'test'
+      ...
+    1..2
+ok 23 - resolveClaudeCodeOptimized: invalid values
+  ---
+  duration_ms: 2.435681
+  type: 'suite'
+  ...
+1..23
+# tests 71
+# suites 23
+# pass 71
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 871.404782
