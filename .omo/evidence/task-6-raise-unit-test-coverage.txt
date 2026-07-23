@@ -1,0 +1,200 @@
+
+> @ghcp/login@0.1.0 pretest
+> npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build
+
+
+> @ghcp/shared@0.1.0 build
+> tsc
+
+
+> @ghcp/database@0.1.0 build
+> tsc
+
+
+> @ghcp/login@0.1.0 test
+> node --test --import tsx/esm "src/**/*.unit.test.ts"
+
+TAP version 13
+# Subtest: requireInternalToken
+    # Subtest: rejects with 401 when the token header is missing
+    ok 1 - rejects with 401 when the token header is missing
+      ---
+      duration_ms: 1.756881
+      type: 'test'
+      ...
+    # Subtest: rejects with 401 when the token value is incorrect
+    ok 2 - rejects with 401 when the token value is incorrect
+      ---
+      duration_ms: 0.31628
+      type: 'test'
+      ...
+    # Subtest: calls next() when the token is correct and does not set 401
+    ok 3 - calls next() when the token is correct and does not set 401
+      ---
+      duration_ms: 0.296676
+      type: 'test'
+      ...
+    1..3
+ok 1 - requireInternalToken
+  ---
+  duration_ms: 25.997839
+  type: 'suite'
+  ...
+# Subtest: config SSO_PROVIDER resolution
+    # Subtest: defaults to "custom" when unset
+    ok 1 - defaults to "custom" when unset
+      ---
+      duration_ms: 20.64142
+      type: 'test'
+      ...
+    # Subtest: resolves "custom" explicitly (case-insensitive, trimmed)
+    ok 2 - resolves "custom" explicitly (case-insensitive, trimmed)
+      ---
+      duration_ms: 11.346418
+      type: 'test'
+      ...
+    # Subtest: resolves "azure" (case-insensitive)
+    ok 3 - resolves "azure" (case-insensitive)
+      ---
+      duration_ms: 7.257536
+      type: 'test'
+      ...
+    # Subtest: throws for an invalid SSO_PROVIDER value
+    ok 4 - throws for an invalid SSO_PROVIDER value
+      ---
+      duration_ms: 7.241059
+      type: 'test'
+      ...
+    1..4
+ok 2 - config SSO_PROVIDER resolution
+  ---
+  duration_ms: 48.417364
+  type: 'suite'
+  ...
+# Subtest: config default values
+    # Subtest: applies defaults for optional vars when unset
+    ok 1 - applies defaults for optional vars when unset
+      ---
+      duration_ms: 7.374167
+      type: 'test'
+      ...
+    # Subtest: uses the fixed GitHub device flow endpoints
+    ok 2 - uses the fixed GitHub device flow endpoints
+      ---
+      duration_ms: 7.125927
+      type: 'test'
+      ...
+    1..2
+ok 3 - config default values
+  ---
+  duration_ms: 14.990918
+  type: 'suite'
+  ...
+# Subtest: config env parsing overrides
+    # Subtest: reads INTERNAL_API_TOKEN from env
+    ok 1 - reads INTERNAL_API_TOKEN from env
+      ---
+      duration_ms: 5.898765
+      type: 'test'
+      ...
+    # Subtest: parses boolean env vars (true/false forms)
+    ok 2 - parses boolean env vars (true/false forms)
+      ---
+      duration_ms: 4.169065
+      type: 'test'
+      ...
+    # Subtest: parses PORT and timeout as integers
+    ok 3 - parses PORT and timeout as integers
+      ---
+      duration_ms: 11.951619
+      type: 'test'
+      ...
+    1..3
+ok 4 - config env parsing overrides
+  ---
+  duration_ms: 23.073007
+  type: 'suite'
+  ...
+# Subtest: config required/validated vars throw on invalid input
+    # Subtest: throws for a non-numeric PORT
+    ok 1 - throws for a non-numeric PORT
+      ---
+      duration_ms: 8.538455
+      type: 'test'
+      ...
+    # Subtest: throws for an out-of-range PORT
+    ok 2 - throws for an out-of-range PORT
+      ---
+      duration_ms: 5.683436
+      type: 'test'
+      ...
+    # Subtest: throws for a non-positive LOGIN_CONCURRENCY
+    ok 3 - throws for a non-positive LOGIN_CONCURRENCY
+      ---
+      duration_ms: 3.927175
+      type: 'test'
+      ...
+    # Subtest: throws for an invalid boolean AUTH_HEADLESS
+    ok 4 - throws for an invalid boolean AUTH_HEADLESS
+      ---
+      duration_ms: 3.529728
+      type: 'test'
+      ...
+    1..4
+ok 5 - config required/validated vars throw on invalid input
+  ---
+  duration_ms: 22.132174
+  type: 'suite'
+  ...
+# Subtest: AccountLogger redaction
+    # Subtest: redacts secret fields and passes through non-secret fields
+    ok 1 - redacts secret fields and passes through non-secret fields
+      ---
+      duration_ms: 9.673503
+      type: 'test'
+      ...
+    # Subtest: writes the log file into a hashed bucket subdirectory of logDir
+    ok 2 - writes the log file into a hashed bucket subdirectory of logDir
+      ---
+      duration_ms: 4.036392
+      type: 'test'
+      ...
+    # Subtest: does not write debug lines when debug is disabled
+    ok 3 - does not write debug lines when debug is disabled
+      ---
+      duration_ms: 2.379575
+      type: 'test'
+      ...
+    # Subtest: writes debug lines when debug is enabled
+    ok 4 - writes debug lines when debug is enabled
+      ---
+      duration_ms: 6.57301
+      type: 'test'
+      ...
+    # Subtest: redacts token/secret keys in warn/error output too
+    ok 5 - redacts token/secret keys in warn/error output too
+      ---
+      duration_ms: 7.864547
+      type: 'test'
+      ...
+    # Subtest: creates the log directory tree lazily
+    ok 6 - creates the log directory tree lazily
+      ---
+      duration_ms: 3.269594
+      type: 'test'
+      ...
+    1..6
+ok 6 - AccountLogger redaction
+  ---
+  duration_ms: 35.881469
+  type: 'suite'
+  ...
+1..6
+# tests 22
+# suites 6
+# pass 22
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 546.629358
