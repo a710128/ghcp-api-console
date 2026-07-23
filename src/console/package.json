@@ -7,7 +7,9 @@
     "start": "tsx src/server/index.ts",
     "start:prod": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
-    "build": "tsc && vite build"
+    "build": "tsc && vite build",
+    "pretest": "npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build",
+    "test": "node --test --import tsx/esm \"src/**/*.unit.test.ts\""
   },
   "dependencies": {
     "@ghcp/shared": "0.1.0"

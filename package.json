@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": [
     "src/packages/*",
     "src/proxy",
@@ -29,10 +32,15 @@
     "compose:build": "docker compose build",
     "compose:up": "docker compose up -d --build",
     "compose:down": "docker compose down",
-    "validate:health": "bash scripts/validate-health.sh"
+    "validate:health": "bash scripts/validate-health.sh",
+    "pretest": "npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build",
+    "test": "npm run test --workspaces --if-present",
+    "test:coverage": "c8 npm run test",
+    "test:integration": "npm run test:integration --workspaces --if-present",
+    "db:generate": "npm --workspace @ghcp/database run db:generate",
+    "db:migrate": "npm --workspace @ghcp/database run db:migrate"
   },
   "dependencies": {
-    "better-sqlite3": "^12.5.0",
     "cookie-session": "^2.1.0",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
@@ -47,13 +55,13 @@
   },
   "devDependencies": {
     "@types/cookie-session": "^2.0.49",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.1.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.1.2",
+    "c8": "^10",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

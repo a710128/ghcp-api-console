@@ -1,0 +1,42 @@
+{
+  "name": "@ghcp/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/cli/migrate.ts",
+    "pretest": "npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build",
+    "test": "node --test --import tsx/esm \"src/**/*.unit.test.ts\"",
+    "test:integration": "node --test --test-concurrency=1 --import tsx/esm \"src/**/*.integration.test.ts\"",
+    "test:guard": "bun test src/tests/legacy-guard.test.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.2",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.11",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "peerDependencies": {
+    "pg-boss": "^10.1.5"
+  },
+  "peerDependenciesMeta": {
+    "pg-boss": {
+      "optional": true
+    }
+  }
+}
