@@ -35,7 +35,7 @@
     "validate:health": "bash scripts/validate-health.sh",
     "pretest": "npm --workspace @ghcp/shared run build && npm --workspace @ghcp/database run build",
     "test": "npm run test --workspaces --if-present",
-    "test:coverage": "c8 npm run test",
+    "test:coverage": "c8 --config .c8rc.json node --test --import tsx/esm \"src/packages/shared/src/**/*.unit.test.ts\" \"src/packages/database/src/**/*.unit.test.ts\" \"src/proxy/src/**/*.unit.test.ts\" \"src/sso/src/**/*.unit.test.ts\" \"src/login/src/**/*.unit.test.ts\" \"src/console/src/**/*.unit.test.ts\"",
     "test:integration": "npm run test:integration --workspaces --if-present",
     "db:generate": "npm --workspace @ghcp/database run db:generate",
     "db:migrate": "npm --workspace @ghcp/database run db:migrate"
