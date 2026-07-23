@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./test-support": {
+      "types": "./src/testSupport.ts",
+      "import": "./src/testSupport.ts"
     }
   },
   "scripts": {
