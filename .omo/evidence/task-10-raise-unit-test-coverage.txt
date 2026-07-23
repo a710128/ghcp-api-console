@@ -1,0 +1,72 @@
+Task 10 — Postgres integration tests for proxy accountsRepo
+============================================================
+
+File created:
+  src/proxy/src/db/accountsRepo.integration.test.ts
+
+Setup sequence (as specified, no deviation):
+  applyTestEncryptionEnv() -> bare pg.Pool -> resetDatabase(barePool)
+    -> barePool.end() -> initPool()   [initPool inserts cluster_metadata]
+  beforeEach: TRUNCATE proxy.accounts RESTART IDENTITY CASCADE
+    (NOTE: plan mentioned proxy.request_stats, but that table does NOT exist
+     in PostgreSQL — request stats are not persisted in PG per accountsRepo
+     deleteAccountsBySsoUser -> deletedRequestStats: 0 and migration 0001.
+     Only proxy.accounts is a real PG data table, so we truncate only it.)
+  after: closePool()
+
+Tests written (13):
+  1. createAccount -> retrievable by getAccount
+  2. getAccount(nonExistent) -> undefined
+  3. listAccounts({}) -> page with items + total
+  4. listAccounts({ q }) -> filtered
+  5. importGithubToken -> encrypted at rest + crypto round-trip (raw row decrypt)
+  6. saveGithubToken -> updates encrypted token for existing account
+  7. markGithubTokenStatus -> status updated
+  8. saveCopilotToken -> encrypted at rest + crypto round-trip (raw row decrypt)
+  9. markCopilotTokenStatus -> status updated
+ 10. deleteAccountsBySsoUser -> deletes matching, returns counts, survivors kept
+ 11. deleteAccountsBySsoUser -> case-insensitive on sso_user
+ 12. deleteAccountsBySsoUser -> blank ssoUser deletes nothing
+ 13. toAccountDto -> no ghToken/copilotToken secret fields; status fields preserved
+
+Actual repo function signatures used (verified against source, no `pool` param —
+they use the pool.ts singleton internally):
+  createAccount({ identity, ssoUser, ghLogin? })
+  getAccount(identity)
+  listAccounts({ q?, page?, pageSize?, sort?, dir? })
+  importGithubToken({ identity, ssoUser, ghLogin?, ghToken })
+  saveGithubToken(identity, ghToken, ghLogin?)
+  markGithubTokenStatus(identity, status)
+  saveCopilotToken({ identity, token, api, expiresAt })
+  markCopilotTokenStatus(identity, status)
+  deleteAccountsBySsoUser(ssoUser)
+  toAccountDto(record)
+
+Crypto round-trip verification:
+  decryptCredential({ cipher, nonce }, getDataEncryptionKey(), buildAad(identity, 'gh_token'|'copilot_token'))
+  Asserts ciphertext != plaintext AND decrypt(ciphertext) == plaintext.
+
+--------------------------------------------------------------
+RUN 1: TEST_DATABASE_URL set
+  cmd: TEST_DATABASE_URL='postgres://ghcp_test:ghcp_test_password@localhost:5433/ghcp_test' \
+       npm --workspace @ghcp/proxy run test:integration
+  result:
+    # tests 13
+    # pass 13
+    # fail 0
+    # skipped 0
+  EXIT=0  ✓
+
+RUN 2: TEST_DATABASE_URL unset
+  cmd: unset TEST_DATABASE_URL; npm --workspace @ghcp/proxy run test:integration
+  result:
+    ok 1 - skip # SKIP TEST_DATABASE_URL not set
+    # tests 1
+    # pass 0
+    # fail 0
+    # skipped 1
+  EXIT=0  ✓
+
+--------------------------------------------------------------
+No source files modified. No GitHub/Copilot network hit.
+Node v22.23.1. Docker postgres-test running on :5433.
