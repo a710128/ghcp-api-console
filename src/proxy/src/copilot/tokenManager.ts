@@ -1,7 +1,8 @@
 import { isoFromEpochSeconds, type SsoType } from '@ghcp/shared';
-import { createAccount, getAccount, markCopilotTokenStatus, markGithubTokenStatus, saveCopilotToken } from '../db/accountsRepo.js';
+import { createAccount, getAccount, markCopilotTokenStatus, saveCopilotToken } from '../db/accountsRepo.js';
+import { getGeneralPool, getCoordinationPool } from '../db/connection.js';
 import { ensureSsoUser, syncEmuUser } from '../clients/ssoClient.js';
-import { createLoginTask } from '../clients/loginClient.js';
+import { getDatabaseConfig, withPostgresAdvisoryLock, ADVISORY_NAMESPACES, createOrCoalesceLoginTaskTx } from '@ghcp/database';
 import { config } from '../config.js';
 import { Logger } from '../logger.js';
 import { exchangeCopilotToken, type CopilotTokenData } from './copilotToken.js';
@@ -25,7 +26,7 @@ class TokenManager {
   private readonly refreshing = new Map<string, Promise<CopilotTokenData>>();
 
   async getToken(identity: string): Promise<CopilotTokenData> {
-    const account = getAccount(identity);
+    const account = await getAccount(identity);
     if (!account) {
       void this.initializeIdentity(identity).catch((err: unknown) => {
         this.logger.error('identity-init', 'Identity initialization failed', {
@@ -57,19 +58,22 @@ class TokenManager {
   async refreshCopilot(identity: string): Promise<CopilotTokenData> {
     const existing = this.refreshing.get(identity);
     if (existing) return existing;
-    const promise = this.refreshCopilotOnce(identity).finally(() => this.refreshing.delete(identity));
+    const promise = this.refreshCopilotWithLock(identity).finally(() => this.refreshing.delete(identity));
     this.refreshing.set(identity, promise);
     return promise;
   }
 
   async triggerGithubRefresh(identity: string, options: { ssoPassword?: string; ssoType?: SsoType } = {}): Promise<void> {
-    const account = getAccount(identity);
+    const account = await getAccount(identity);
     if (!account) throw new Error(`Unknown identity "${identity}".`);
     if (!account.ssoUser) throw new Error(`Identity "${identity}" is missing an SSO user.`);
     if (!account.ghLogin) throw new Error(`Identity "${identity}" is missing a GitHub login.`);
     if (!options.ssoPassword) throw new Error('ssoPassword is required to trigger a GitHub token refresh.');
-    markGithubTokenStatus(identity, 'refreshing');
-    await createLoginTask({
+
+    const loginKey = getDatabaseConfig().loginJobEncryptionKey;
+    const pool = getGeneralPool();
+
+    await createOrCoalesceLoginTaskTx(pool, loginKey, {
       identity,
       ssoUser: account.ssoUser,
       ssoPassword: options.ssoPassword,
@@ -87,38 +91,97 @@ class TokenManager {
   }
 
   private async initializeIdentityOnce(identity: string): Promise<void> {
+    const existingAccount = await getAccount(identity);
+    if (existingAccount) return;
+
     this.logger.info('identity-init', 'Initializing unknown identity', { identity });
-    const ensured = await ensureSsoUser({ identity, preferredSsoUser: ssoUserFromIdentity(identity) });
-    const synced = await syncEmuUser(ensured.user.ssoUser);
-    if (!synced.ghLogin) throw new Error(`SSO user "${ensured.user.ssoUser}" did not return a GH login.`);
-    createAccount({
+
+    const coordPool = getCoordinationPool();
+    const lockResult = await withPostgresAdvisoryLock(
+      coordPool,
+      ADVISORY_NAMESPACES.PROXY_INIT,
       identity,
-      ssoUser: ensured.user.ssoUser,
-      ghLogin: synced.ghLogin,
-      ghTokenStatus: 'refreshing',
-      copilotTokenStatus: 'missing',
-    });
-    const ssoPassword = ensured.passwordForLogin ?? ensured.user.ssoUser;
-    if (!ssoPassword) {
-      markGithubTokenStatus(identity, 'failed');
-      throw new Error(`SSO did not return a login password for newly initialized identity "${identity}".`);
+      async () => {
+        const account = await getAccount(identity);
+        if (account) {
+          this.logger.info('identity-init-skip', 'Account created by another replica', { identity });
+          return;
+        }
+
+        const ensured = await ensureSsoUser({ identity, preferredSsoUser: ssoUserFromIdentity(identity) });
+        const synced = await syncEmuUser(ensured.user.ssoUser);
+        if (!synced.ghLogin) throw new Error(`SSO user "${ensured.user.ssoUser}" did not return a GH login.`);
+
+        await createAccount({
+          identity,
+          ssoUser: ensured.user.ssoUser,
+          ghLogin: synced.ghLogin,
+          ghTokenStatus: 'missing',
+          copilotTokenStatus: 'missing',
+        });
+
+        const ssoPassword = ensured.passwordForLogin;
+        if (!ssoPassword) {
+          this.logger.info('identity-init-no-password', 'SSO user exists with operator-managed credentials; not auto-enqueueing', { identity, ssoUser: ensured.user.ssoUser });
+          return;
+        }
+
+        const loginKey = getDatabaseConfig().loginJobEncryptionKey;
+        const pool = getGeneralPool();
+        const taskResult = await createOrCoalesceLoginTaskTx(pool, loginKey, {
+          identity,
+          ssoUser: ensured.user.ssoUser,
+          ssoPassword,
+          ghLogin: synced.ghLogin,
+          ssoType: 'custom',
+        });
+
+        this.logger.info('identity-init-task', 'Login task created for new identity', {
+          identity,
+          taskId: taskResult.task.id,
+          created: taskResult.created,
+        });
+      },
+    );
+
+    if (!lockResult.lockAcquired) {
+      this.logger.info('identity-init-locked', 'Another replica is initializing this identity', { identity });
     }
-    await createLoginTask({
+  }
+
+  private async refreshCopilotWithLock(identity: string): Promise<CopilotTokenData> {
+    const coordPool = getCoordinationPool();
+    const lockResult = await withPostgresAdvisoryLock(
+      coordPool,
+      ADVISORY_NAMESPACES.PROXY_REFRESH,
       identity,
-      ssoUser: ensured.user.ssoUser,
-      ssoPassword,
-      ghLogin: synced.ghLogin,
-      ssoType: 'custom',
-    });
+      () => this.refreshCopilotOnce(identity),
+    );
+
+    if (!lockResult.lockAcquired) {
+      const account = await getAccount(identity);
+      if (account?.copilotToken && account.copilotTokenExpiresAt && isFuture(account.copilotTokenExpiresAt)) {
+        return {
+          token: account.copilotToken,
+          expiresAt: Math.floor(new Date(account.copilotTokenExpiresAt).getTime() / 1000),
+          refreshIn: 0,
+          api: account.copilotApi ?? DEFAULT_COPILOT_API,
+          fetchedAt: 0,
+        };
+      }
+      throw new TokenNotReadyError(503, 'token_not_ready', 'Copilot token refresh in progress on another replica.');
+    }
+
+    return lockResult.result!;
   }
 
   private async refreshCopilotOnce(identity: string): Promise<CopilotTokenData> {
-    const account = getAccount(identity);
+    const account = await getAccount(identity);
     if (!account?.ghToken) throw new Error(`Identity "${identity}" does not have a GitHub token.`);
     try {
-      markCopilotTokenStatus(identity, 'refreshing');
+      await markCopilotTokenStatus(identity, 'refreshing');
       const token = await exchangeCopilotToken(account.ghToken);
-      saveCopilotToken({
+      await saveCopilotToken({
         identity,
         token: token.token,
         api: token.api,
@@ -126,7 +189,7 @@ class TokenManager {
       });
       return token;
     } catch (err) {
-      markCopilotTokenStatus(identity, 'failed');
+      await markCopilotTokenStatus(identity, 'failed');
       throw err;
     }
   }

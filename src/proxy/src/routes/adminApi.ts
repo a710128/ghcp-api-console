@@ -9,8 +9,8 @@ import { Logger } from '../logger.js';
 export const adminApiRouter = Router();
 const logger = new Logger('admin-api');
 
-adminApiRouter.get('/accounts', (req, res) => {
-  const result = listAccounts({
+adminApiRouter.get('/accounts', async (req, res) => {
+  const result = await listAccounts({
     q: stringQuery(req.query.q),
     page: numberQuery(req.query.page),
     pageSize: numberQuery(req.query.pageSize),
@@ -20,8 +20,8 @@ adminApiRouter.get('/accounts', (req, res) => {
   res.json({ ...result, items: result.items.map(toAccountDto) });
 });
 
-adminApiRouter.get('/accounts/:identity', (req, res) => {
-  const account = getAccount(req.params.identity);
+adminApiRouter.get('/accounts/:identity', async (req, res) => {
+  const account = await getAccount(req.params.identity);
   if (!account) {
     res.status(404).json(apiError('account_not_found', 'Proxy account was not found.'));
     return;
@@ -47,10 +47,15 @@ adminApiRouter.post('/accounts/gh-token/import', async (req, res) => {
 });
 
 adminApiRouter.get('/accounts/:identity/request-stats', (req, res) => {
+  // Request stat persistence is disabled in PostgreSQL mode.
+  // Returning empty array; use /metrics or Docker logs for request visibility.
+  logger.info('request-stats-disabled', 'Request stats endpoint called; persistence is disabled', { identity: req.params.identity });
   res.json(listRequestStats(req.params.identity, readLimit(req.query.limit)));
 });
 
 adminApiRouter.get('/request-stats', (req, res) => {
+  // Request stat persistence is disabled in PostgreSQL mode.
+  logger.info('request-stats-disabled', 'Global request stats endpoint called; persistence is disabled');
   res.json(listRequestStats(undefined, readLimit(req.query.limit)));
 });
 
@@ -58,7 +63,7 @@ adminApiRouter.post('/accounts/:identity/copilot-token/refresh', async (req, res
   try {
     logger.info('refresh-copilot-start', 'Manual Copilot token refresh requested', { identity: req.params.identity });
     await tokenManager.refreshCopilot(req.params.identity);
-    const account = getAccount(req.params.identity);
+    const account = await getAccount(req.params.identity);
     logger.info('refresh-copilot-done', 'Manual Copilot token refresh completed', { identity: req.params.identity, copilotTokenStatus: account?.copilotTokenStatus });
     res.json(account ? toAccountDto(account) : undefined);
   } catch (err) {
@@ -75,7 +80,7 @@ adminApiRouter.post('/accounts/:identity/gh-token/refresh', async (req, res) => 
       ssoPassword: typeof body.ssoPassword === 'string' ? body.ssoPassword : undefined,
       ssoType: body.ssoType === 'azure' || body.ssoType === 'custom' ? body.ssoType : undefined,
     });
-    const account = getAccount(req.params.identity);
+    const account = await getAccount(req.params.identity);
     logger.info('refresh-github-queued', 'Manual GitHub token refresh queued login task', { identity: req.params.identity, ghTokenStatus: account?.ghTokenStatus });
     res.json(account ? toAccountDto(account) : undefined);
   } catch (err) {

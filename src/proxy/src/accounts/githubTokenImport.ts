@@ -44,7 +44,7 @@ export async function importGithubTokens(csvText: string): Promise<BatchResult<I
 async function importGithubTokenRow(row: ImportRow): Promise<ImportGithubTokenRow> {
   try {
     const ssoUser = await getSsoUser(row.name);
-    const account = importGithubToken({
+    const account = await importGithubToken({
       identity: row.name,
       ssoUser: ssoUser.ssoUser,
       ghLogin: ssoUser.ghLogin ?? row.name,

@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 
 export interface ProxyConfig {
   port: number;
-  dbPath: string;
   apiKey: string;
   identityHeader: string;
   identityHeaderRequired: boolean;
@@ -38,7 +37,6 @@ export interface ClaudeCodeOptimizedEditorHeaders {
 
 export const config: ProxyConfig = {
   port: readPort(process.env.PORT, 3000),
-  dbPath: process.env.DB_PATH ?? './data/proxy.sqlite',
   apiKey: process.env.API_KEY ?? '',
   identityHeader: process.env.IDENTITY_HEADER ?? 'X-User-Identity',
   identityHeaderRequired: readBoolean(process.env.IDENTITY_HEADER_REQUIRED, true),
