@@ -1,31 +1,30 @@
-import { isoFromEpochSeconds, type SsoType } from '@ghcp/shared';
-import { createAccount, getAccount, markCopilotTokenStatus, saveCopilotToken } from '../db/accountsRepo.js';
+import type { SsoType } from '@ghcp/shared';
+import { createAccount, getAccount, markCopilotOauthStatus } from '../db/accountsRepo.js';
 import { getGeneralPool, getCoordinationPool } from '../db/connection.js';
 import { ensureSsoUser, syncEmuUser } from '../clients/ssoClient.js';
 import { getDatabaseConfig, withPostgresAdvisoryLock, ADVISORY_NAMESPACES, createOrCoalesceLoginTaskTx } from '@ghcp/database';
 import { config } from '../config.js';
 import { Logger } from '../logger.js';
-import { exchangeCopilotToken, type CopilotTokenData } from './copilotToken.js';
+import type { CopilotAuthContext } from './copilotAuth.js';
 
 const DEFAULT_COPILOT_API = 'https://api.githubcopilot.com';
 
-export class TokenNotReadyError extends Error {
+export class CopilotAuthNotReadyError extends Error {
   constructor(
     readonly status: number,
-    readonly code: 'account_initializing' | 'token_not_ready',
+    readonly code: 'account_initializing' | 'oauth_not_ready',
     message: string,
   ) {
     super(message);
-    this.name = 'TokenNotReadyError';
+    this.name = 'CopilotAuthNotReadyError';
   }
 }
 
-class TokenManager {
-  private readonly logger = new Logger('token-manager');
+class CopilotAuthManager {
+  private readonly logger = new Logger('copilot-auth-manager');
   private readonly initializing = new Map<string, Promise<void>>();
-  private readonly refreshing = new Map<string, Promise<CopilotTokenData>>();
 
-  async getToken(identity: string): Promise<CopilotTokenData> {
+  async getAuth(identity: string): Promise<CopilotAuthContext> {
     const account = await getAccount(identity);
     if (!account) {
       void this.initializeIdentity(identity).catch((err: unknown) => {
@@ -34,45 +33,42 @@ class TokenManager {
           error: err instanceof Error ? err.message : String(err),
         });
       });
-      throw new TokenNotReadyError(202, 'account_initializing', 'Account initialization has started.');
+      throw new CopilotAuthNotReadyError(202, 'account_initializing', 'Account initialization has started.');
     }
-    if (!account.ghToken) {
-      throw new TokenNotReadyError(
-        account.ghTokenStatus === 'refreshing' ? 202 : 503,
-        account.ghTokenStatus === 'refreshing' ? 'account_initializing' : 'token_not_ready',
-        'GitHub token is not ready for this identity.',
+
+    if (account.copilotOauthStatus === 'valid' && !account.copilotOauthToken) {
+      await markCopilotOauthStatus(identity, 'failed');
+      throw new CopilotAuthNotReadyError(503, 'oauth_not_ready', 'Copilot OAuth credential could not be decrypted for this identity.');
+    }
+
+    if (!account.copilotOauthToken || account.copilotOauthStatus !== 'valid') {
+      const initializing = account.copilotOauthStatus === 'refreshing';
+      throw new CopilotAuthNotReadyError(
+        initializing ? 202 : 503,
+        initializing ? 'account_initializing' : 'oauth_not_ready',
+        initializing
+          ? 'Copilot OAuth authorization is in progress for this identity.'
+          : 'Copilot OAuth authorization is required for this identity.',
       );
     }
-    if (account.copilotToken && account.copilotTokenExpiresAt && isFuture(account.copilotTokenExpiresAt)) {
-      return {
-        token: account.copilotToken,
-        expiresAt: Math.floor(new Date(account.copilotTokenExpiresAt).getTime() / 1000),
-        refreshIn: 0,
-        api: account.copilotApi ?? DEFAULT_COPILOT_API,
-        fetchedAt: 0,
-      };
-    }
-    return this.refreshCopilot(identity);
+
+    return {
+      identity,
+      accessToken: account.copilotOauthToken,
+      api: account.copilotApi ?? DEFAULT_COPILOT_API,
+      credentialVersion: account.credentialVersion,
+    };
   }
 
-  async refreshCopilot(identity: string): Promise<CopilotTokenData> {
-    const existing = this.refreshing.get(identity);
-    if (existing) return existing;
-    const promise = this.refreshCopilotWithLock(identity).finally(() => this.refreshing.delete(identity));
-    this.refreshing.set(identity, promise);
-    return promise;
-  }
-
-  async triggerGithubRefresh(identity: string, options: { ssoPassword?: string; ssoType?: SsoType } = {}): Promise<void> {
+  async triggerOauthRefresh(identity: string, options: { ssoPassword?: string; ssoType?: SsoType } = {}): Promise<void> {
     const account = await getAccount(identity);
     if (!account) throw new Error(`Unknown identity "${identity}".`);
     if (!account.ssoUser) throw new Error(`Identity "${identity}" is missing an SSO user.`);
     if (!account.ghLogin) throw new Error(`Identity "${identity}" is missing a GitHub login.`);
-    if (!options.ssoPassword) throw new Error('ssoPassword is required to trigger a GitHub token refresh.');
+    if (!options.ssoPassword) throw new Error('ssoPassword is required to reauthorize Copilot OAuth.');
 
     const loginKey = getDatabaseConfig().loginJobEncryptionKey;
     const pool = getGeneralPool();
-
     await createOrCoalesceLoginTaskTx(pool, loginKey, {
       identity,
       ssoUser: account.ssoUser,
@@ -116,13 +112,13 @@ class TokenManager {
           identity,
           ssoUser: ensured.user.ssoUser,
           ghLogin: synced.ghLogin,
-          ghTokenStatus: 'missing',
-          copilotTokenStatus: 'missing',
+          copilotOauthStatus: 'refreshing',
         });
 
         const ssoPassword = ensured.passwordForLogin;
         if (!ssoPassword) {
           this.logger.info('identity-init-no-password', 'SSO user exists with operator-managed credentials; not auto-enqueueing', { identity, ssoUser: ensured.user.ssoUser });
+          await markCopilotOauthStatus(identity, 'missing');
           return;
         }
 
@@ -148,55 +144,6 @@ class TokenManager {
       this.logger.info('identity-init-locked', 'Another replica is initializing this identity', { identity });
     }
   }
-
-  private async refreshCopilotWithLock(identity: string): Promise<CopilotTokenData> {
-    const coordPool = getCoordinationPool();
-    const lockResult = await withPostgresAdvisoryLock(
-      coordPool,
-      ADVISORY_NAMESPACES.PROXY_REFRESH,
-      identity,
-      () => this.refreshCopilotOnce(identity),
-    );
-
-    if (!lockResult.lockAcquired) {
-      const account = await getAccount(identity);
-      if (account?.copilotToken && account.copilotTokenExpiresAt && isFuture(account.copilotTokenExpiresAt)) {
-        return {
-          token: account.copilotToken,
-          expiresAt: Math.floor(new Date(account.copilotTokenExpiresAt).getTime() / 1000),
-          refreshIn: 0,
-          api: account.copilotApi ?? DEFAULT_COPILOT_API,
-          fetchedAt: 0,
-        };
-      }
-      throw new TokenNotReadyError(503, 'token_not_ready', 'Copilot token refresh in progress on another replica.');
-    }
-
-    return lockResult.result!;
-  }
-
-  private async refreshCopilotOnce(identity: string): Promise<CopilotTokenData> {
-    const account = await getAccount(identity);
-    if (!account?.ghToken) throw new Error(`Identity "${identity}" does not have a GitHub token.`);
-    try {
-      await markCopilotTokenStatus(identity, 'refreshing');
-      const token = await exchangeCopilotToken(account.ghToken);
-      await saveCopilotToken({
-        identity,
-        token: token.token,
-        api: token.api,
-        expiresAt: isoFromEpochSeconds(token.expiresAt),
-      });
-      return token;
-    } catch (err) {
-      await markCopilotTokenStatus(identity, 'failed');
-      throw err;
-    }
-  }
-}
-
-function isFuture(iso: string): boolean {
-  return new Date(iso).getTime() - Date.now() > 60_000;
 }
 
 function ssoUserFromIdentity(identity: string): string {
@@ -218,4 +165,4 @@ function stripEnterpriseShortcode(value: string): string {
   return stripped || value;
 }
 
-export const tokenManager = new TokenManager();
+export const copilotAuthManager = new CopilotAuthManager();

@@ -1,5 +1,6 @@
 export type GhTokenStatus = 'valid' | 'expired' | 'missing' | 'refreshing' | 'failed';
 export type CopilotTokenStatus = 'valid' | 'expired' | 'missing' | 'refreshing' | 'failed';
+export type CopilotOauthStatus = 'valid' | 'expired' | 'missing' | 'refreshing' | 'failed';
 export type EmuStatus = 'active' | 'suspended' | 'deleted' | 'not_synced';
 export type CopilotSeatStatus = 'unknown' | 'assigned' | 'unassigned' | 'assign_failed' | 'remove_failed';
 export type CopilotSeatOperation = 'assign' | 'remove';
@@ -20,6 +21,8 @@ export interface ProxyAccountDto {
   ghTokenUpdatedAt?: string;
   copilotTokenStatus: CopilotTokenStatus;
   copilotTokenExpiresAt?: string;
+  copilotOauthStatus: CopilotOauthStatus;
+  copilotOauthUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +37,20 @@ export interface ImportGithubTokenRow {
   line: number;
   name: string;
   status: ImportGithubTokenRowStatus;
+  detail: string;
+  account?: ProxyAccountDto;
+}
+
+export interface ImportCopilotOauthTokensRequest {
+  csvText: string;
+}
+
+export type ImportCopilotOauthTokenRowStatus = 'success' | 'failed';
+
+export interface ImportCopilotOauthTokenRow {
+  line: number;
+  name: string;
+  status: ImportCopilotOauthTokenRowStatus;
   detail: string;
   account?: ProxyAccountDto;
 }

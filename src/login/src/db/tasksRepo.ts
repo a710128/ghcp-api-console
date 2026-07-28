@@ -149,6 +149,57 @@ export async function claimTask(taskId: string, workerId: string): Promise<strin
   return res.rowCount === 1 ? attemptToken : null;
 }
 
+export interface ClaimedTaskFence {
+  attemptToken: string;
+  taskGeneration: bigint;
+}
+
+/**
+ * Atomically claim a pending task AND mirror the fresh attempt token onto the bound
+ * proxy account, so the eventual OAuth delivery fence
+ * (taskId, taskGeneration, attemptToken) matches. Returns null if not claimable.
+ */
+export async function claimTaskWithFence(taskId: string): Promise<ClaimedTaskFence | null> {
+  const pool = getGeneralPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const attemptToken = randomUUID();
+    const claim = await client.query<{ task_generation: bigint; identity: string }>(
+      `UPDATE login.tasks
+       SET status = 'running',
+           attempts = attempts + 1,
+           current_attempt_token = $1,
+           started_at = now(),
+           finished_at = NULL,
+           failure_reason = NULL
+       WHERE id = $2
+         AND status = 'pending'
+         AND current_attempt_token IS NULL
+       RETURNING task_generation, identity`,
+      [attemptToken, taskId],
+    );
+    if (claim.rowCount !== 1) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const { task_generation, identity } = claim.rows[0]!;
+    await client.query(
+      `UPDATE proxy.accounts
+       SET active_attempt_token = $1, updated_at = now()
+       WHERE identity = $2 AND active_login_task_id = $3 AND active_task_generation = $4`,
+      [attemptToken, identity, taskId, task_generation],
+    );
+    await client.query('COMMIT');
+    return { attemptToken, taskGeneration: BigInt(task_generation) };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function markRunning(id: string, _logPath: string): Promise<LoginTaskRecord> {
   // logPath removed from PostgreSQL schema; kept for API compatibility
   const pool = getGeneralPool();

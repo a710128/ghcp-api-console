@@ -5,8 +5,8 @@
  * Credentials (gh_token, copilot_token) are encrypted with AES-256-GCM
  * using DATA_ENCRYPTION_KEY. Plaintext is never stored in the database.
  */
-import type { CopilotTokenStatus, GhTokenStatus, PageResponse, ProxyAccountDto } from '@ghcp/shared';
-import { nowIso, pageResponse } from '@ghcp/shared';
+import type { CopilotOauthStatus, CopilotTokenStatus, GhTokenStatus, PageResponse, ProxyAccountDto } from '@ghcp/shared';
+import { pageResponse } from '@ghcp/shared';
 import { getGeneralPool, getDataEncryptionKey } from './pool.js';
 import { encryptCredential, decryptCredential, buildAad } from './crypto.js';
 
@@ -21,6 +21,9 @@ export interface ProxyAccountRecord {
   copilotApi?: string;
   copilotTokenExpiresAt?: string;
   copilotTokenStatus: CopilotTokenStatus;
+  copilotOauthToken?: string;
+  copilotOauthStatus: CopilotOauthStatus;
+  copilotOauthUpdatedAt?: string;
   credentialVersion: bigint;
   activeLoginTaskId?: string;
   activeTaskGeneration?: bigint;
@@ -33,7 +36,7 @@ export interface AccountListQuery {
   q?: string;
   page?: number;
   pageSize?: number;
-  sort?: 'identity' | 'ssoUser' | 'ghLogin' | 'ghTokenStatus' | 'copilotTokenStatus' | 'createdAt' | 'updatedAt';
+  sort?: 'identity' | 'ssoUser' | 'ghLogin' | 'ghTokenStatus' | 'copilotTokenStatus' | 'copilotOauthStatus' | 'createdAt' | 'updatedAt';
   dir?: 'asc' | 'desc';
 }
 
@@ -60,6 +63,10 @@ interface AccountRow {
   copilot_api: string | null;
   copilot_token_expires_at: Date | null;
   copilot_token_status: CopilotTokenStatus;
+  copilot_oauth_token_cipher: string | null;
+  copilot_oauth_token_nonce: string | null;
+  copilot_oauth_status: CopilotOauthStatus;
+  copilot_oauth_updated_at: Date | null;
   credential_version: bigint;
   active_login_task_id: string | null;
   active_task_generation: bigint | null;
@@ -96,6 +103,18 @@ function decryptCopilotToken(identity: string, cipher: string, nonce: string): s
   return decryptCredential({ cipher, nonce }, key, aad);
 }
 
+function encryptCopilotOauthToken(identity: string, token: string): { cipher: string; nonce: string } {
+  const key = getDataEncryptionKey();
+  const aad = buildAad(identity, 'copilot_oauth_token');
+  return encryptCredential(token, key, aad);
+}
+
+function decryptCopilotOauthToken(identity: string, cipher: string, nonce: string): string {
+  const key = getDataEncryptionKey();
+  const aad = buildAad(identity, 'copilot_oauth_token');
+  return decryptCredential({ cipher, nonce }, key, aad);
+}
+
 // ============================================================
 // Row mapping
 // ============================================================
@@ -120,6 +139,15 @@ function mapRow(row: AccountRow): ProxyAccountRecord {
     }
   }
 
+  let copilotOauthToken: string | undefined;
+  if (row.copilot_oauth_token_cipher && row.copilot_oauth_token_nonce) {
+    try {
+      copilotOauthToken = decryptCopilotOauthToken(row.identity, row.copilot_oauth_token_cipher, row.copilot_oauth_token_nonce);
+    } catch {
+      // Decryption failure — leave undefined; getAuth() treats missing token as not-ready.
+    }
+  }
+
   return {
     identity: row.identity,
     ssoUser: row.sso_user,
@@ -131,6 +159,9 @@ function mapRow(row: AccountRow): ProxyAccountRecord {
     copilotApi: row.copilot_api ?? undefined,
     copilotTokenExpiresAt: row.copilot_token_expires_at?.toISOString(),
     copilotTokenStatus: row.copilot_token_status,
+    copilotOauthToken,
+    copilotOauthStatus: row.copilot_oauth_status,
+    copilotOauthUpdatedAt: row.copilot_oauth_updated_at?.toISOString(),
     credentialVersion: row.credential_version,
     activeLoginTaskId: row.active_login_task_id ?? undefined,
     activeTaskGeneration: row.active_task_generation ?? undefined,
@@ -147,6 +178,7 @@ function sortColumn(sort: AccountListQuery['sort']): string {
     case 'ghLogin': return 'gh_login';
     case 'ghTokenStatus': return 'gh_token_status';
     case 'copilotTokenStatus': return 'copilot_token_status';
+    case 'copilotOauthStatus': return 'copilot_oauth_status';
     case 'createdAt': return 'created_at';
     default: return 'updated_at';
   }
@@ -234,12 +266,13 @@ export async function createAccount(input: {
   ghLogin?: string;
   ghTokenStatus?: GhTokenStatus;
   copilotTokenStatus?: CopilotTokenStatus;
+  copilotOauthStatus?: CopilotOauthStatus;
 }): Promise<ProxyAccountRecord> {
   const pool = getGeneralPool();
   await pool.query(
     `INSERT INTO proxy.accounts (
-       identity, sso_user, gh_login, gh_token_status, copilot_token_status, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, now(), now())
+       identity, sso_user, gh_login, gh_token_status, copilot_token_status, copilot_oauth_status, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, now(), now())
      ON CONFLICT(identity) DO UPDATE SET
        sso_user = EXCLUDED.sso_user,
        gh_login = COALESCE(EXCLUDED.gh_login, proxy.accounts.gh_login),
@@ -250,6 +283,7 @@ export async function createAccount(input: {
       input.ghLogin ?? null,
       input.ghTokenStatus ?? 'missing',
       input.copilotTokenStatus ?? 'missing',
+      input.copilotOauthStatus ?? 'missing',
     ],
   );
   return (await getAccount(input.identity))!;
@@ -366,6 +400,154 @@ export async function markCopilotTokenStatus(identity: string, status: CopilotTo
   );
 }
 
+export async function importCopilotOauthToken(input: {
+  identity: string;
+  ssoUser: string;
+  ghLogin?: string;
+  copilotOauthToken: string;
+}): Promise<ProxyAccountRecord> {
+  const pool = getGeneralPool();
+  const encrypted = encryptCopilotOauthToken(input.identity, input.copilotOauthToken);
+  await pool.query(
+    `INSERT INTO proxy.accounts (
+       identity, sso_user, gh_login,
+       copilot_oauth_token_cipher, copilot_oauth_token_nonce, copilot_oauth_status, copilot_oauth_updated_at,
+       gh_token_status, copilot_token_status,
+       credential_version, active_login_task_id, active_task_generation, active_attempt_token,
+       created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, 'valid', now(), 'missing', 'missing', 1, NULL, NULL, NULL, now(), now())
+     ON CONFLICT(identity) DO UPDATE SET
+       sso_user = EXCLUDED.sso_user,
+       gh_login = COALESCE(EXCLUDED.gh_login, proxy.accounts.gh_login),
+       copilot_oauth_token_cipher = EXCLUDED.copilot_oauth_token_cipher,
+       copilot_oauth_token_nonce = EXCLUDED.copilot_oauth_token_nonce,
+       copilot_oauth_status = 'valid',
+       copilot_oauth_updated_at = now(),
+       credential_version = proxy.accounts.credential_version + 1,
+       active_login_task_id = NULL,
+       active_task_generation = NULL,
+       active_attempt_token = NULL,
+       updated_at = now()`,
+    [input.identity, input.ssoUser, input.ghLogin ?? null, encrypted.cipher, encrypted.nonce],
+  );
+  return (await getAccount(input.identity))!;
+}
+
+export interface SaveCopilotOauthTokenInput {
+  identity: string;
+  taskId: string;
+  taskGeneration: bigint;
+  attemptToken: string;
+  copilotOauthToken: string;
+  ghLogin?: string;
+}
+
+export type SaveCopilotOauthTokenResult = 'saved' | 'stale' | 'unknown_identity';
+
+/**
+ * Fenced OAuth write-back: applies only when the delivered
+ * (taskId, generation, attemptToken) still matches the account's active binding,
+ * so a stale worker cannot overwrite a newer credential. Bumps credential_version.
+ */
+export async function saveCopilotOauthToken(input: SaveCopilotOauthTokenInput): Promise<SaveCopilotOauthTokenResult> {
+  const pool = getGeneralPool();
+  const encrypted = encryptCopilotOauthToken(input.identity, input.copilotOauthToken);
+  const result = await pool.query(
+    `UPDATE proxy.accounts
+     SET copilot_oauth_token_cipher = $1,
+         copilot_oauth_token_nonce = $2,
+         gh_login = COALESCE($3, gh_login),
+         copilot_oauth_status = 'valid',
+         copilot_oauth_updated_at = now(),
+         credential_version = credential_version + 1,
+         active_login_task_id = NULL,
+         active_task_generation = NULL,
+         active_attempt_token = NULL,
+         updated_at = now()
+     WHERE identity = $4
+       AND active_login_task_id = $5
+       AND active_task_generation = $6
+       AND active_attempt_token = $7`,
+    [
+      encrypted.cipher,
+      encrypted.nonce,
+      input.ghLogin ?? null,
+      input.identity,
+      input.taskId,
+      input.taskGeneration.toString(),
+      input.attemptToken,
+    ],
+  );
+  if ((result.rowCount ?? 0) > 0) return 'saved';
+  const account = await getAccount(input.identity);
+  return account ? 'stale' : 'unknown_identity';
+}
+
+/**
+ * Fenced failure transition: refreshing -> failed, only when the delivered fence
+ * matches the account's active binding.
+ */
+export async function failCopilotOauthAuthorization(input: {
+  identity: string;
+  taskId: string;
+  taskGeneration: bigint;
+  attemptToken: string;
+}): Promise<'failed' | 'stale' | 'unknown_identity'> {
+  const pool = getGeneralPool();
+  const result = await pool.query(
+    `UPDATE proxy.accounts
+     SET copilot_oauth_status = 'failed',
+         active_login_task_id = NULL,
+         active_task_generation = NULL,
+         active_attempt_token = NULL,
+         updated_at = now()
+     WHERE identity = $1
+       AND active_login_task_id = $2
+       AND active_task_generation = $3
+       AND active_attempt_token = $4
+       AND copilot_oauth_status = 'refreshing'`,
+    [input.identity, input.taskId, input.taskGeneration.toString(), input.attemptToken],
+  );
+  if ((result.rowCount ?? 0) > 0) return 'failed';
+  const account = await getAccount(input.identity);
+  return account ? 'stale' : 'unknown_identity';
+}
+
+export async function markCopilotOauthStatus(identity: string, status: CopilotOauthStatus): Promise<void> {
+  const pool = getGeneralPool();
+  await pool.query(
+    'UPDATE proxy.accounts SET copilot_oauth_status = $1, updated_at = now() WHERE identity = $2',
+    [status, identity],
+  );
+}
+
+/**
+ * Invalidate a live OAuth token after an upstream 401. Fences on credential_version
+ * (compare-and-set) rather than plaintext token comparison, because the ciphertext is
+ * randomized; this avoids clobbering a concurrent import/refresh that already advanced
+ * the version.
+ */
+export async function invalidateCopilotOauthToken(
+  identity: string,
+  expectedCredentialVersion: bigint,
+  status: Extract<CopilotOauthStatus, 'expired' | 'failed'>,
+): Promise<boolean> {
+  const pool = getGeneralPool();
+  const result = await pool.query(
+    `UPDATE proxy.accounts
+     SET copilot_oauth_token_cipher = NULL,
+         copilot_oauth_token_nonce = NULL,
+         copilot_oauth_status = $1,
+         copilot_oauth_updated_at = now(),
+         updated_at = now()
+     WHERE identity = $2
+       AND credential_version = $3
+       AND copilot_oauth_status = 'valid'`,
+    [status, identity, expectedCredentialVersion.toString()],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 export function toAccountDto(account: ProxyAccountRecord): ProxyAccountDto {
   return {
     identity: account.identity,
@@ -375,6 +557,8 @@ export function toAccountDto(account: ProxyAccountRecord): ProxyAccountDto {
     ghTokenUpdatedAt: account.ghTokenUpdatedAt,
     copilotTokenStatus: account.copilotTokenStatus,
     copilotTokenExpiresAt: account.copilotTokenExpiresAt,
+    copilotOauthStatus: account.copilotOauthStatus,
+    copilotOauthUpdatedAt: account.copilotOauthUpdatedAt,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };

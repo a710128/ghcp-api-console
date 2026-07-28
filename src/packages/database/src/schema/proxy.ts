@@ -17,6 +17,10 @@ export interface ProxyAccountRow {
   copilot_api: string | null;
   copilot_token_expires_at: Date | null;
   copilot_token_status: 'valid' | 'expired' | 'missing' | 'refreshing' | 'failed';
+  copilot_oauth_token_cipher: string | null;
+  copilot_oauth_token_nonce: string | null;
+  copilot_oauth_status: 'valid' | 'expired' | 'missing' | 'refreshing' | 'failed';
+  copilot_oauth_updated_at: Date | null;
   credential_version: bigint;
   active_login_task_id: string | null;
   active_task_generation: bigint | null;
@@ -27,3 +31,4 @@ export interface ProxyAccountRow {
 
 export type GhTokenStatus = ProxyAccountRow['gh_token_status'];
 export type CopilotTokenStatus = ProxyAccountRow['copilot_token_status'];
+export type CopilotOauthStatus = ProxyAccountRow['copilot_oauth_status'];

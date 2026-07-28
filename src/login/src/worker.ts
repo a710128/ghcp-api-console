@@ -16,19 +16,16 @@
  */
 import { loggerFor } from '@ghcp/shared';
 import { initPool, getGeneralPool, getLoginJobEncryptionKey, closePool } from './db/pool.js';
-import { getTask, markSuccess, markFailed } from './db/tasksRepo.js';
+import { getTask, markSuccess, markFailed, claimTaskWithFence, type ClaimedTaskFence } from './db/tasksRepo.js';
 import { config } from './config.js';
 import { HeadlessPlaywrightAuthStrategy } from './auth/HeadlessPlaywrightAuthStrategy.js';
 import { loginWithDeviceFlow } from './auth/deviceFlow.js';
-import { saveGithubToken } from './clients/proxyClient.js';
-import { createCipheriv, createDecipheriv } from 'node:crypto';
+import { saveCopilotOauthToken, markCopilotOauthFailed } from './clients/proxyClient.js';
 
 const logger = loggerFor('login', 'worker');
 
 interface JobPayload {
   taskId: string;
-  taskGeneration: string;
-  attemptToken: string;
 }
 
 interface DecryptedSecret {
@@ -94,11 +91,18 @@ async function processLoginJob(data: JobPayload): Promise<void> {
     return;
   }
 
-  // Mark task running (increment attempts)
-  await pool.query(
-    `UPDATE login.tasks SET status = 'running', attempts = attempts + 1, started_at = now(), finished_at = NULL, failure_reason = NULL WHERE id = $1`,
-    [taskId],
-  );
+  // Claim atomically and mirror the attempt token onto the proxy account, forming the
+  // (taskId, taskGeneration, attemptToken) delivery fence.
+  const fence: ClaimedTaskFence | null = await claimTaskWithFence(taskId);
+  if (!fence) {
+    logger.warn('job-skip', 'Task was not claimable (already claimed or not pending)', { taskId });
+    return;
+  }
+  const deliveryFence = {
+    taskId,
+    taskGeneration: fence.taskGeneration.toString(),
+    attemptToken: fence.attemptToken,
+  };
 
   try {
     const authConfig = {
@@ -113,7 +117,7 @@ async function processLoginJob(data: JobPayload): Promise<void> {
 
     logger.info('playwright-start', 'Starting Playwright browser login', { taskId, identity: task.identity, ssoUser: task.ssoUser, ghLogin: task.ghLogin });
 
-    const githubToken = await loginWithDeviceFlow(
+    const oauthToken = await loginWithDeviceFlow(
       new HeadlessPlaywrightAuthStrategy(
         authConfig,
         {
@@ -126,18 +130,19 @@ async function processLoginJob(data: JobPayload): Promise<void> {
       accountLogger,
     );
 
-    await saveGithubToken(task.identity, githubToken, task.ghLogin ?? undefined);
-    await markSuccess(taskId);
+    await saveCopilotOauthToken(task.identity, oauthToken, deliveryFence, task.ghLogin ?? undefined);
+    await markSuccess(taskId, fence.attemptToken);
 
-    // Clean up task secret (terminal success)
     await pool.query('DELETE FROM login.task_secrets WHERE task_id = $1', [taskId]);
 
     logger.info('job-success', 'Login job completed successfully', { taskId, identity: task.identity });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await markFailed(taskId, message.slice(0, 2000));
+    await markFailed(taskId, message.slice(0, 2000), fence.attemptToken);
+    await markCopilotOauthFailed(task.identity, deliveryFence, message.slice(0, 500)).catch((deliverErr: unknown) => {
+      logger.warn('oauth-fail-delivery', 'Failed to deliver OAuth failure to proxy', { taskId, error: deliverErr instanceof Error ? deliverErr.message : String(deliverErr) });
+    });
 
-    // Clean up task secret on terminal failure
     await pool.query('DELETE FROM login.task_secrets WHERE task_id = $1', [taskId]);
 
     logger.error('job-failed', 'Login job failed', { taskId, identity: task.identity, error: message });
@@ -200,7 +205,7 @@ async function runSimpleWorker(): Promise<void> {
       const row = claimRes.rows[0]!;
       activeJobs++;
 
-      void processLoginJob({ taskId: row.id, taskGeneration: '1', attemptToken: '' })
+      void processLoginJob({ taskId: row.id })
         .catch((err) => {
           logger.error('job-error', 'Unhandled job error', { taskId: row.id, error: (err as Error).message });
         })

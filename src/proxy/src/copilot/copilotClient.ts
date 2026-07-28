@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { Logger } from '../logger.js';
-import type { CopilotTokenData } from './copilotToken.js';
+import type { CopilotAuthContext } from './copilotAuth.js';
 
 export const COPILOT_API_PATHS = ['/chat/completions', '/v1/messages', '/responses'] as const;
 export const COPILOT_FORWARD_PATHS = ['/chat/completions', '/v1/messages', '/v1/messages/count_tokens', '/responses'] as const;
@@ -60,12 +60,33 @@ const MODELS_CACHE_NEGATIVE_RECHECK_MS = 60 * 1000;
 const modelsCache = new Map<ModelsCacheKey, ModelsCacheEntry>();
 const modelsCacheLogger = new Logger('models-cache');
 
-export async function listModels(copilot: CopilotTokenData): Promise<ModelInfo[]> {
+export async function listModels(copilot: CopilotAuthContext): Promise<ModelInfo[]> {
   const snapshot = await getModelsSnapshot(copilot);
   return snapshot.models;
 }
 
-async function fetchModels(copilot: CopilotTokenData): Promise<ModelInfo[]> {
+const DEFAULT_COPILOT_API = 'https://api.githubcopilot.com';
+
+/** Validate a raw Copilot OAuth token by listing models. Throws CopilotApiError on failure. */
+export async function validateCopilotOauthToken(identity: string, accessToken: string): Promise<void> {
+  const auth: CopilotAuthContext = {
+    identity,
+    accessToken,
+    api: DEFAULT_COPILOT_API,
+    credentialVersion: 0n,
+  };
+  await fetchModels(auth);
+}
+
+export function clearModelsCache(cacheKey?: string): void {
+  if (cacheKey === undefined) {
+    modelsCache.clear();
+    return;
+  }
+  modelsCache.delete(cacheKey);
+}
+
+async function fetchModels(copilot: CopilotAuthContext): Promise<ModelInfo[]> {
   const res = await fetch(copilotUrl(copilot, '/models'), { headers: copilotHeaders(copilot) });
   if (!res.ok) throw new CopilotApiError(`List models failed: ${res.status} ${await res.text()}`, res.status);
   const data = (await res.json()) as { data?: ModelInfo[] };
@@ -73,7 +94,7 @@ async function fetchModels(copilot: CopilotTokenData): Promise<ModelInfo[]> {
 }
 
 export async function forwardCopilotRequest(
-  copilot: CopilotTokenData,
+  copilot: CopilotAuthContext,
   path: CopilotApiPath,
   body: Record<string, unknown>,
   options: ForwardCopilotRequestOptions = {},
@@ -86,7 +107,7 @@ export async function forwardCopilotRequest(
 }
 
 export async function assertModelSupportsPath(
-  copilot: CopilotTokenData,
+  copilot: CopilotAuthContext,
   path: CopilotApiPath,
   model: string,
 ): Promise<void> {
@@ -109,7 +130,7 @@ export function modelSupportsPath(model: ModelInfo, path: CopilotApiPath): boole
 }
 
 async function getModelsSnapshot(
-  copilot: CopilotTokenData,
+  copilot: CopilotAuthContext,
   options: { forceRefresh?: boolean; allowStaleOnError?: boolean } = {},
 ): Promise<ModelsSnapshot> {
   const cacheKey = modelsCacheKey(copilot);
@@ -144,7 +165,7 @@ function modelsCacheEntry(cacheKey: ModelsCacheKey): ModelsCacheEntry {
   return created;
 }
 
-function refreshModelsInBackground(cacheKey: ModelsCacheKey, copilot: CopilotTokenData, entry: ModelsCacheEntry): void {
+function refreshModelsInBackground(cacheKey: ModelsCacheKey, copilot: CopilotAuthContext, entry: ModelsCacheEntry): void {
   if (entry.refreshPromise) return;
   void refreshModelsSnapshot(cacheKey, copilot, entry).catch((err: unknown) => {
     modelsCacheLogger.warn('background-refresh-failed', 'Copilot models cache background refresh failed', {
@@ -156,7 +177,7 @@ function refreshModelsInBackground(cacheKey: ModelsCacheKey, copilot: CopilotTok
 
 function refreshModelsSnapshot(
   cacheKey: ModelsCacheKey,
-  copilot: CopilotTokenData,
+  copilot: CopilotAuthContext,
   entry: ModelsCacheEntry,
 ): Promise<ModelsSnapshot> {
   if (entry.refreshPromise) return entry.refreshPromise;
@@ -202,8 +223,8 @@ function modelPathError(model: string, path: CopilotApiPath, supportedPaths: Cop
   return new CopilotModelPathError(`Model "${model}" is not available on ${path}. Supported path(s): ${supportedPaths.join(', ')}.`);
 }
 
-function modelsCacheKey(copilot: CopilotTokenData): ModelsCacheKey {
-  const fields = copilotTokenFields(copilot.token);
+function modelsCacheKey(copilot: CopilotAuthContext): ModelsCacheKey {
+  const fields = copilotTokenFields(copilot.accessToken);
   const fromSku = accountTypeFromText(fields.get('sku'));
   if (fromSku) return fromSku;
   const fromProxyEndpoint = accountTypeFromText(fields.get('proxy-ep'));
@@ -242,12 +263,12 @@ function errorMessage(err: unknown): string {
 }
 
 function copilotHeaders(
-  copilot: CopilotTokenData,
+  copilot: CopilotAuthContext,
   acceptsStream = false,
   options: ForwardCopilotRequestOptions = {},
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${copilot.token}`,
+    Authorization: `Bearer ${copilot.accessToken}`,
     'Content-Type': 'application/json',
     Accept: acceptsStream ? 'text/event-stream' : 'application/json',
     'Openai-Intent': 'conversation-panel',
@@ -272,7 +293,7 @@ function copilotHeaders(
   return headers;
 }
 
-function copilotUrl(copilot: CopilotTokenData, path: string): string {
+function copilotUrl(copilot: CopilotAuthContext, path: string): string {
   return `${copilot.api.replace(/\/+$/, '')}${path}`;
 }
 

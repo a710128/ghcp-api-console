@@ -161,10 +161,11 @@ export async function createOrCoalesceLoginTaskTx(
       [taskId, nextGen, pgBossKey, now],
     );
 
-    // Update proxy account binding if account exists
+    // OAuth is the active runtime path: 'refreshing' makes proxy getAuth() return
+    // 202 account_initializing while the login task runs.
     await client.query(
       `UPDATE proxy.accounts
-       SET gh_token_status = 'refreshing',
+       SET copilot_oauth_status = 'refreshing',
            active_login_task_id = $1,
            active_task_generation = $2,
            active_attempt_token = NULL,

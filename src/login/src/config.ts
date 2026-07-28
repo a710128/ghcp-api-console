@@ -8,6 +8,9 @@ export interface LoginConfig {
   logDir: string;
   clientId: string;
   scope: string;
+  githubOauthClientId: string;
+  githubOauthScope: string;
+  opencodeUserAgent: string;
   auth: AuthConfig;
   endpoints: {
     deviceCode: string;
@@ -38,6 +41,9 @@ export const config: LoginConfig = {
   logDir: process.env.LOG_DIR ?? './logs/login',
   clientId: process.env.CLIENT_ID ?? 'Iv1.b507a08c87ecfe98',
   scope: process.env.SCOPE ?? 'read:user',
+  githubOauthClientId: process.env.GITHUB_OAUTH_CLIENT_ID ?? 'Ov23li8tweQw6odWQebz',
+  githubOauthScope: process.env.GITHUB_OAUTH_SCOPE ?? 'read:user',
+  opencodeUserAgent: process.env.OPENCODE_USER_AGENT ?? 'opencode/1.0',
   endpoints: {
     deviceCode: 'https://github.com/login/device/code',
     accessToken: 'https://github.com/login/oauth/access_token',

@@ -36,8 +36,8 @@ async function requestDeviceCode(logger: AccountLogger): Promise<DeviceCodeRespo
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const res = await fetch(config.endpoints.deviceCode, {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...config.editorHeaders },
-      body: JSON.stringify({ client_id: config.clientId, scope: config.scope }),
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': config.opencodeUserAgent },
+      body: JSON.stringify({ client_id: config.githubOauthClientId, scope: config.githubOauthScope }),
     });
 
     if (res.ok) {
@@ -69,9 +69,9 @@ async function pollAccessToken(device: DeviceCodeResponse, logger: AccountLogger
     attempt++;
     const res = await fetch(config.endpoints.accessToken, {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...config.editorHeaders },
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': config.opencodeUserAgent },
       body: JSON.stringify({
-        client_id: config.clientId,
+        client_id: config.githubOauthClientId,
         device_code: device.device_code,
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
       }),

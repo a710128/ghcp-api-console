@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { AiCreditsUsageDto, BatchResult, ImportEmuPlanDto, ImportEmuUserRow, ImportEmuUserStatus, ImportGithubTokenRow, LoginTaskDto, LoginTaskStatus, ProxyAccountDto, ProxyRequestStatDto, SsoType, SsoUserBatchOperation, SsoUserBatchRow, SsoUserDto } from '@ghcp/shared';
+import type { AiCreditsUsageDto, BatchResult, ImportCopilotOauthTokenRow, ImportEmuPlanDto, ImportEmuUserRow, ImportEmuUserStatus, LoginTaskDto, LoginTaskStatus, ProxyAccountDto, ProxyRequestStatDto, SsoType, SsoUserBatchOperation, SsoUserBatchRow, SsoUserDto } from '@ghcp/shared';
 import { api } from './api/client.js';
 import { cancelLoginTask, deleteLoginTask, listLoginTasks, listLoginTasksPage, retryLoginTask } from './api/login.js';
-import { importGithubTokens, listProxyAccounts, listRequestStats, refreshCopilotToken, refreshGithubToken } from './api/proxy.js';
+import { importCopilotOauthTokens, listProxyAccounts, listRequestStats, reauthorizeCopilotOauth } from './api/proxy.js';
 import {
   createSsoUser,
   applyEmuImportPlan,
@@ -39,8 +39,8 @@ const pages: { id: Page; label: string; description: string }[] = [
   { id: 'users', label: 'SSO Users', description: 'Create, import, sync, suspend, and manage SSO accounts.' },
   { id: 'budgets', label: 'AI Credits Usage', description: 'Review enterprise AI Credits consumption and Copilot seat cost.' },
   { id: 'stats', label: 'Request Stats', description: 'Review request failures and input/output/cache token usage.' },
-  { id: 'accounts', label: 'Proxy Accounts', description: 'Inspect identity mappings and refresh GitHub or Copilot tokens.' },
-  { id: 'tasks', label: 'Login Tasks', description: 'Monitor automatic login and GitHub-token refresh tasks.' },
+  { id: 'accounts', label: 'Proxy Accounts', description: 'Inspect identity mappings and reauthorize Copilot OAuth tokens.' },
+  { id: 'tasks', label: 'Login Tasks', description: 'Monitor automatic login and Copilot OAuth reauthorization tasks.' },
   { id: 'diagnostics', label: 'Diagnostics', description: 'Check console-to-service API connectivity.' },
 ];
 
@@ -228,7 +228,7 @@ function DashboardPage(_props: { notify: Notify }) {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="Proxy accounts" value={accounts.length} detail={countBy(accounts, 'ghTokenStatus')} error={errors.accounts} />
+        <MetricCard title="Proxy accounts" value={accounts.length} detail={countBy(accounts, 'copilotOauthStatus')} error={errors.accounts} />
         <MetricCard title="SSO users" value={users.length} detail={countBy(users, 'emuStatus')} error={errors.users} />
         <MetricCard title="Login failures" value={failedTasks.length} detail={`${tasks.length} recent task(s)`} error={errors.tasks} />
         <MetricCard title="Recent tokens" value={formatNumber(totals.input + totals.output + totals.cache)} detail={`in ${formatNumber(totals.input)} / out ${formatNumber(totals.output)} / cache ${formatNumber(totals.cache)} (input ${formatNumber(totals.cacheInput)} / write ${formatNumber(totals.cacheWrite)})`} error={errors.stats} />
@@ -601,11 +601,10 @@ function ProxyAccountsPage(props: { notify: Notify }) {
   const [q, setQ] = useState('');
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
-  const [ghRefresh, setGhRefresh] = useState<ProxyAccountDto>();
+  const [reauthorize, setReauthorize] = useState<ProxyAccountDto>();
   const [detail, setDetail] = useState<ProxyAccountDto>();
   const [importOpen, setImportOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [bulkAction, setBulkAction] = useState<string>();
   const allCurrentPageSelected = accounts.length > 0 && accounts.every((account) => selected.has(account.identity));
   const selectedAccounts = accounts.filter((account) => selected.has(account.identity));
   const singleSelected = selected.size === 1 ? selectedAccounts[0] : undefined;
@@ -651,29 +650,6 @@ function ProxyAccountsPage(props: { notify: Notify }) {
 
   const clearSelection = () => setSelected(new Set());
 
-  const runRefreshCopilot = async () => {
-    const identities = [...selected];
-    if (identities.length === 0) return;
-    setBulkAction('Refresh Copilot');
-    const failures: string[] = [];
-    try {
-      for (const identity of identities) {
-        try {
-          await refreshCopilotToken(identity);
-        } catch (err) {
-          failures.push(`${identity}: ${(err as Error).message}`);
-        }
-      }
-      props.notify(
-        `Copilot refresh: ${identities.length - failures.length} succeeded, ${failures.length} failed.${failures[0] ? ` ${failures[0]}` : ''}`,
-        failures.length > 0 ? 'error' : 'success',
-      );
-      await load();
-    } finally {
-      setBulkAction(undefined);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <Card>
@@ -684,7 +660,7 @@ function ProxyAccountsPage(props: { notify: Notify }) {
           </div>
           <div className="flex flex-1 justify-end gap-2">
             <Input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search identity, SSO user, or GH login" className="max-w-md flex-1" />
-            <Button variant="secondary" onClick={() => setImportOpen(true)}>Import GH tokens</Button>
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>Import OAuth tokens</Button>
             <Button variant="secondary" onClick={() => { clearSelection(); void load(1); }}>Search</Button>
             <Button variant="secondary" onClick={() => void load()}>Refresh list</Button>
           </div>
@@ -692,11 +668,9 @@ function ProxyAccountsPage(props: { notify: Notify }) {
       </Card>
       <ProxyAccountActionBar
         count={selected.size}
-        busy={bulkAction}
         singleSelected={Boolean(singleSelected)}
         onDetails={() => { if (singleSelected) setDetail(singleSelected); }}
-        onRefreshGithub={() => { if (singleSelected) setGhRefresh(singleSelected); }}
-        onRefreshCopilot={runRefreshCopilot}
+        onReauthorize={() => { if (singleSelected) setReauthorize(singleSelected); }}
         onClear={clearSelection}
       />
       {loading ? <LoadingState label="Loading proxy accounts..." /> : null}
@@ -709,8 +683,7 @@ function ProxyAccountsPage(props: { notify: Notify }) {
               <Th>Header identity</Th>
               <Th>SSO user</Th>
               <Th>GH login</Th>
-              <Th>GitHub token</Th>
-              <Th>Copilot token</Th>
+              <Th>Copilot OAuth</Th>
               <Th>Updated</Th>
             </tr>
           </thead>
@@ -721,52 +694,47 @@ function ProxyAccountsPage(props: { notify: Notify }) {
                 <Td className="font-medium">{account.identity}</Td>
                 <Td>{account.ssoUser}</Td>
                 <Td>{account.ghLogin ?? '-'}</Td>
-                <Td><StatusWithDate status={account.ghTokenStatus} date={account.ghTokenUpdatedAt} /></Td>
-                <Td><StatusWithDate status={account.copilotTokenStatus} date={account.copilotTokenExpiresAt ? `expires ${formatDate(account.copilotTokenExpiresAt)}` : undefined} /></Td>
+                <Td><StatusWithDate status={account.copilotOauthStatus} date={account.copilotOauthUpdatedAt} /></Td>
                 <Td>{formatDate(account.updatedAt)}</Td>
               </tr>
             ))}
-            {accounts.length === 0 ? <EmptyRow colSpan={7} label="No proxy accounts found." /> : null}
+            {accounts.length === 0 ? <EmptyRow colSpan={6} label="No proxy accounts found." /> : null}
           </tbody>
         </Table>
       </Card>
       <Pagination page={page} total={total} pageSize={25} onPage={(next) => { clearSelection(); void load(next); }} />
-      <GithubRefreshDialog account={ghRefresh} onClose={() => setGhRefresh(undefined)} onDone={async () => { setGhRefresh(undefined); props.notify('GitHub token refresh task requested.'); await load(); }} />
+      <CopilotOauthReauthorizeDialog account={reauthorize} onClose={() => setReauthorize(undefined)} onDone={async () => { setReauthorize(undefined); props.notify('Copilot OAuth reauthorization task requested.'); await load(); }} />
       <ProxyAccountDetailDialog account={detail} onClose={() => setDetail(undefined)} />
-      <ImportGithubTokensDialog open={importOpen} onClose={() => setImportOpen(false)} onDone={async () => { await load(1); props.notify('GitHub token import completed.'); }} />
+      <ImportCopilotOauthTokensDialog open={importOpen} onClose={() => setImportOpen(false)} onDone={async () => { await load(1); props.notify('Copilot OAuth token import completed.'); }} />
     </div>
   );
 }
 
 function ProxyAccountActionBar(props: {
   count: number;
-  busy?: string;
   singleSelected: boolean;
   onDetails: () => void;
-  onRefreshGithub: () => void;
-  onRefreshCopilot: () => void;
+  onReauthorize: () => void;
   onClear: () => void;
 }) {
-  const disabled = props.count === 0 || Boolean(props.busy);
-  const singleDisabled = !props.singleSelected || Boolean(props.busy);
+  const singleDisabled = !props.singleSelected;
   return (
     <Card className="border-blue-200 bg-blue-50">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <p className="text-sm font-medium text-blue-900">{props.count} selected</p>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={props.onDetails} disabled={singleDisabled}>Details</Button>
-          <Button variant="secondary" onClick={props.onRefreshGithub} disabled={singleDisabled}>Refresh GH</Button>
-          <Button onClick={props.onRefreshCopilot} disabled={disabled}>{props.busy === 'Refresh Copilot' ? 'Refreshing...' : 'Refresh Copilot'}</Button>
-          <Button variant="ghost" onClick={props.onClear} disabled={Boolean(props.busy)}>Clear selection</Button>
+          <Button variant="secondary" onClick={props.onReauthorize} disabled={singleDisabled}>Reauthorize OAuth</Button>
+          <Button variant="ghost" onClick={props.onClear} disabled={props.count === 0}>Clear selection</Button>
         </div>
       </div>
     </Card>
   );
 }
 
-function ImportGithubTokensDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
-  const [csvText, setCsvText] = useState('name,githubToken\n');
-  const [result, setResult] = useState<BatchResult<ImportGithubTokenRow>>();
+function ImportCopilotOauthTokensDialog(props: { open: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+  const [csvText, setCsvText] = useState('name,copilotOauthToken\n');
+  const [result, setResult] = useState<BatchResult<ImportCopilotOauthTokenRow>>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
@@ -774,7 +742,7 @@ function ImportGithubTokensDialog(props: { open: boolean; onClose: () => void; o
     setSaving(true);
     setError(undefined);
     try {
-      const importResult = await importGithubTokens(csvText);
+      const importResult = await importCopilotOauthTokens(csvText);
       setResult(importResult);
       await props.onDone();
     } catch (err) {
@@ -786,8 +754,8 @@ function ImportGithubTokensDialog(props: { open: boolean; onClose: () => void; o
 
   return (
     <Dialog
-      title="Import GitHub tokens"
-      description="CSV format: name,githubToken. name must already exist in SSO Users. Imported tokens overwrite existing GitHub tokens and are never echoed back."
+      title="Import Copilot OAuth tokens"
+      description="CSV format: name,copilotOauthToken. name must already exist in SSO Users. Tokens are validated against Copilot /models and never echoed back."
       open={props.open}
       onClose={props.onClose}
     >
@@ -1375,7 +1343,7 @@ function BatchCreateDialog(props: { open: boolean; onClose: () => void; onDone: 
   );
 }
 
-function GithubRefreshDialog(props: { account?: ProxyAccountDto; onClose: () => void; onDone: () => Promise<void> }) {
+function CopilotOauthReauthorizeDialog(props: { account?: ProxyAccountDto; onClose: () => void; onDone: () => Promise<void> }) {
   const [ssoPassword, setSsoPassword] = useState('');
   const [ssoType, setSsoType] = useState<SsoType>('custom');
   const [error, setError] = useState<string>();
@@ -1394,7 +1362,7 @@ function GithubRefreshDialog(props: { account?: ProxyAccountDto; onClose: () => 
     setSaving(true);
     setError(undefined);
     try {
-      await refreshGithubToken(props.account.identity, { ssoPassword, ssoType });
+      await reauthorizeCopilotOauth(props.account.identity, { ssoPassword, ssoType });
       await props.onDone();
     } catch (err) {
       setError((err as Error).message);
@@ -1404,7 +1372,7 @@ function GithubRefreshDialog(props: { account?: ProxyAccountDto; onClose: () => 
   };
 
   return (
-    <Dialog title={`Refresh GitHub token${props.account ? ` for ${props.account.identity}` : ''}`} description="This creates a login task and requires the user's SSO password." open={Boolean(props.account)} onClose={props.onClose}>
+    <Dialog title={`Reauthorize Copilot OAuth${props.account ? ` for ${props.account.identity}` : ''}`} description="This creates a login task and requires the user's SSO password." open={Boolean(props.account)} onClose={props.onClose}>
       <FormGrid>
         <Label text="SSO password"><Input type="password" value={ssoPassword} onChange={(event) => setSsoPassword(event.target.value)} /></Label>
         <Label text="SSO type">
@@ -1414,7 +1382,7 @@ function GithubRefreshDialog(props: { account?: ProxyAccountDto; onClose: () => 
           </select>
         </Label>
       </FormGrid>
-      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Create refresh task" />
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Create reauthorization task" />
     </Dialog>
   );
 }
@@ -1484,9 +1452,8 @@ function ProxyAccountDetailDialog(props: { account?: ProxyAccountDto; onClose: (
             <Info label="Header identity" value={props.account.identity} />
             <Info label="SSO user" value={props.account.ssoUser} />
             <Info label="GH login" value={props.account.ghLogin ?? '-'} />
-            <Info label="GitHub token" value={props.account.ghTokenStatus} />
-            <Info label="Copilot token" value={props.account.copilotTokenStatus} />
-            <Info label="Copilot expires" value={formatDate(props.account.copilotTokenExpiresAt)} />
+            <Info label="Copilot OAuth" value={props.account.copilotOauthStatus} />
+            <Info label="OAuth updated" value={formatDate(props.account.copilotOauthUpdatedAt)} />
           </div>
           {error ? <ErrorState message={error} /> : null}
           <div className="max-h-96 overflow-auto rounded border border-slate-200">
