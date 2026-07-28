@@ -138,7 +138,7 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 
 | 方法 | 路径 | 认证 | 请求核心结构 | 响应核心结构 |
 | --- | --- | --- | --- | --- |
-| `GET` | `/v1/models` | API Key + identity | 无 | 按认证 header 区分：使用 `Authorization: Bearer` 返回 OpenAI/Copilot 风格 `{ object: "list", data: [...] }`，只含支持 `/chat/completions` 或 `/responses` 的模型；使用 `x-api-key` 返回 Anthropic 风格 `{ data: [{ type: "model", id, display_name, max_input_tokens, max_tokens }], has_more, first_id, last_id }`，只含支持 `/v1/messages` 的模型；两种模式下 `id` 均保持 Copilot 原始模型名。 |
+| `GET` | `/v1/models` | API Key + identity | 无 | 按认证 header 区分：使用 `Authorization: Bearer` 返回 OpenAI/Copilot 风格 `{ object: "list", data: [...] }`，只含支持 `/responses` 的模型；使用 `x-api-key` 返回 Anthropic 风格 `{ data: [{ type: "model", id, display_name, max_input_tokens, max_tokens }], has_more, first_id, last_id }`，只含支持 `/v1/messages` 的模型；两种模式下 `id` 均保持 Copilot 原始模型名。 |
 | `POST` | `/v1/chat/completions` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Chat Completions 形状 | 直接返回 Copilot 上游状态、`content-type` 和 body；支持 SSE。 |
 | `POST` | `/v1/responses` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Responses 形状 | 同上。 |
 | `POST` | `/v1/messages` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持 Anthropic Messages 形状 | 同上；优化模式会做 Claude Code 兼容预处理。 |
@@ -157,7 +157,7 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 
 当请求解析为 Claude Code 优化模式时，Proxy 将 `/v1/messages` 和 `/v1/messages/count_tokens` 视为 Claude Code 入口，但仍然转发到 Copilot 原生 Anthropic Messages API，不做 Anthropic/OpenAI 大模型协议转换。默认值来自 `CLAUDE_CODE_OPTIMIZED`，单个请求可用 `X-Claude-Code-Optimized: true|false` 覆盖。当前优化逻辑包括：
 
-- **模型与路径**：`GET /v1/models` 的可见模型和响应格式由认证 header 决定（`x-api-key` -> Anthropic 风格、`/v1/messages` 模型；`Authorization: Bearer` -> OpenAI 风格、`/chat/completions` 或 `/responses` 模型），不再受 Claude Code 优化模式控制；请求体中的 Claude 日期后缀模型名会先规范化，例如 `claude-sonnet-4-5-20250929` -> `claude-sonnet-4.5`，再做路径校验和上游转发。
+- **模型与路径**：`GET /v1/models` 的可见模型和响应格式由认证 header 决定（`x-api-key` -> Anthropic 风格、`/v1/messages` 模型；`Authorization: Bearer` -> OpenAI 风格、`/responses` 模型），不再受 Claude Code 优化模式控制；请求体中的 Claude 日期后缀模型名会先规范化，例如 `claude-sonnet-4-5-20250929` -> `claude-sonnet-4.5`，再做路径校验和上游转发。
 - **模型 profile**：`anthropicModelProfiles.ts` 维护 Claude 模型的 thinking/effort 能力。enabled-only 模型会去掉不支持的 `output_config.effort`，并把 `thinking.type=adaptive` 改成合法的 enabled 形态；adaptive-only 模型会把 `thinking.type=enabled` 改成 `adaptive`；预算会限制到 profile 上限并保持 `< max_tokens`，thinking 打开时会把强制工具选择 `any/tool` 改成 `auto`。
 - **请求体清理**：递归移除 `cache_control.scope`；删除 Claude Code 注入的易变 `# currentDate` 块；过滤无签名、占位或签名含 `@` 的历史 assistant `thinking` 块；去掉 `"Tool loaded."` 边界消息；合并同一 user message 内的 `tool_result + text`；末尾 assistant message 后追加 `Please continue.`；非 `defer_loading` 的 `mcp__ide__executeCode` 会被移除。
 - **mid-conversation system**：对多数模型，历史中间位置的 `role:"system"` 会改成 `role:"user"`，并给首个 text block 加 `[Claude Code injected]\n` 前缀；仅 profile 标记可接受且位置合法的模型会保留原 system message。

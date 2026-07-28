@@ -57,9 +57,7 @@ compatibleRouter.get('/v1/models', async (req, res) => {
       });
       return;
     }
-    const visibleModels = models.filter(
-      (m) => modelSupportsPath(m, '/chat/completions') || modelSupportsPath(m, '/responses'),
-    );
+    const visibleModels = models.filter((m) => modelSupportsPath(m, '/responses'));
     res.json({ object: 'list', data: visibleModels.map((m) => ({ object: 'model', owned_by: 'github-copilot', ...m })) });
   } catch (err) {
     recordRequestStat({ identity, path: '/v1/models', success: false, failureReason: errorMessage(err) });
