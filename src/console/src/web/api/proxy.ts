@@ -1,4 +1,4 @@
-import type { BatchResult, ImportCopilotOauthTokenRow, PageResponse, ProxyAccountDto, ProxyRequestStatDto, SsoType } from '@ghcp/shared';
+import type { BatchResult, CopilotOauthBatchLoginItem, CopilotOauthBatchLoginRow, ImportCopilotOauthTokenRow, PageResponse, ProxyAccountDto, ProxyRequestStatDto, SsoType } from '@ghcp/shared';
 import { api } from './client.js';
 
 export interface ListProxyAccountsQuery {
@@ -50,6 +50,13 @@ export function importCopilotOauthTokens(csvText: string): Promise<BatchResult<I
   return api<BatchResult<ImportCopilotOauthTokenRow>>('/api/console/proxy/accounts/copilot-oauth-token/import', {
     method: 'POST',
     body: JSON.stringify({ csvText }),
+  });
+}
+
+export function batchCopilotOauthLogin(items: CopilotOauthBatchLoginItem[]): Promise<BatchResult<CopilotOauthBatchLoginRow>> {
+  return api<BatchResult<CopilotOauthBatchLoginRow>>('/api/console/proxy/accounts/copilot-oauth/batch-login', {
+    method: 'POST',
+    body: JSON.stringify({ items }),
   });
 }
 

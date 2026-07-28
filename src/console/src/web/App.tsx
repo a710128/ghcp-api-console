@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { AiCreditsUsageDto, BatchResult, ImportCopilotOauthTokenRow, ImportEmuPlanDto, ImportEmuUserRow, ImportEmuUserStatus, LoginTaskDto, LoginTaskStatus, ProxyAccountDto, ProxyRequestStatDto, SsoType, SsoUserBatchOperation, SsoUserBatchRow, SsoUserDto } from '@ghcp/shared';
+import type { AiCreditsUsageDto, BatchResult, CopilotOauthBatchLoginRow, ImportCopilotOauthTokenRow, ImportEmuPlanDto, ImportEmuUserRow, ImportEmuUserStatus, LoginTaskDto, LoginTaskStatus, ProxyAccountDto, ProxyRequestStatDto, SsoType, SsoUserBatchOperation, SsoUserBatchRow, SsoUserDto } from '@ghcp/shared';
 import { api } from './api/client.js';
 import { cancelLoginTask, deleteLoginTask, listLoginTasks, listLoginTasksPage, retryLoginTask } from './api/login.js';
-import { importCopilotOauthTokens, listProxyAccounts, listRequestStats, reauthorizeCopilotOauth } from './api/proxy.js';
+import { batchCopilotOauthLogin, importCopilotOauthTokens, listProxyAccounts, listRequestStats, reauthorizeCopilotOauth } from './api/proxy.js';
 import {
   createSsoUser,
   applyEmuImportPlan,
@@ -259,6 +259,7 @@ function UsersPage(props: { notify: Notify }) {
   const [importOpen, setImportOpen] = useState(false);
   const [emuImportOpen, setEmuImportOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [provisionLoginOpen, setProvisionLoginOpen] = useState(false);
   const [editing, setEditing] = useState<SsoUserDto>();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<string>();
@@ -348,6 +349,7 @@ function UsersPage(props: { notify: Notify }) {
       <BulkUserActionBar
         count={selected.size}
         busy={bulkAction}
+        onProvisionLogin={() => setProvisionLoginOpen(true)}
         onSync={() => runBulkUserAction('sync_emu', 'Sync GH login')}
         onAssignCopilot={() => runBulkUserAction('assign_copilot', 'Assign Copilot seat')}
         onRemoveCopilot={() => runBulkUserAction('remove_copilot', 'Remove Copilot seat', (count) => `Remove Copilot seat(s) for ${count} selected user(s)?`)}
@@ -400,6 +402,7 @@ function UsersPage(props: { notify: Notify }) {
       <ImportUsersDialog open={importOpen} onClose={() => setImportOpen(false)} onDone={async () => { await load(1); props.notify('Import completed.'); }} />
       <ImportEmuUsersDialog open={emuImportOpen} onClose={() => setEmuImportOpen(false)} onDone={async () => { await load(1); props.notify('GH import completed.'); }} />
       <BatchCreateDialog open={batchOpen} onClose={() => setBatchOpen(false)} onDone={async () => { setBatchOpen(false); await load(1); props.notify('Batch create completed.'); }} />
+      <BatchProxyLoginDialog open={provisionLoginOpen} ssoUsers={[...selected]} onClose={() => setProvisionLoginOpen(false)} notify={props.notify} onDone={async () => { setProvisionLoginOpen(false); await load(); }} />
       <EditUserDialog user={editing} onClose={() => setEditing(undefined)} onDone={async () => { setEditing(undefined); await load(); props.notify('SSO user updated.'); }} />
       <UserBatchActionResultDialog result={batchResult} onClose={() => setBatchResult(undefined)} />
     </div>
@@ -414,6 +417,7 @@ interface UserBatchActionResult {
 function BulkUserActionBar(props: {
   count: number;
   busy?: string;
+  onProvisionLogin: () => void;
   onSync: () => void;
   onAssignCopilot: () => void;
   onRemoveCopilot: () => void;
@@ -428,6 +432,7 @@ function BulkUserActionBar(props: {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <p className="text-sm font-medium text-blue-900">{props.count} selected</p>
         <div className="flex flex-wrap gap-2">
+          <Button onClick={props.onProvisionLogin} disabled={disabled}>Provision + login</Button>
           <Button variant="secondary" onClick={props.onSync} disabled={disabled}>{props.busy === 'Sync GH login' ? 'Syncing...' : 'Sync GH login'}</Button>
           <Button variant="secondary" onClick={props.onAssignCopilot} disabled={disabled}>{props.busy === 'Assign Copilot seat' ? 'Assigning...' : 'Assign Copilot seat'}</Button>
           <Button variant="secondary" onClick={props.onRemoveCopilot} disabled={disabled}>{props.busy === 'Remove Copilot seat' ? 'Removing...' : 'Remove Copilot seat'}</Button>
@@ -1383,6 +1388,83 @@ function CopilotOauthReauthorizeDialog(props: { account?: ProxyAccountDto; onClo
         </Label>
       </FormGrid>
       <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel="Create reauthorization task" />
+    </Dialog>
+  );
+}
+
+function BatchProxyLoginDialog(props: { open: boolean; ssoUsers: string[]; onClose: () => void; notify: Notify; onDone: () => Promise<void> }) {
+  const [ssoPassword, setSsoPassword] = useState('');
+  const [passwordIsUsername, setPasswordIsUsername] = useState(true);
+  const [ssoType, setSsoType] = useState<SsoType>('custom');
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const [rows, setRows] = useState<CopilotOauthBatchLoginRow[]>();
+
+  useEffect(() => {
+    if (props.open) {
+      setSsoPassword('');
+      setPasswordIsUsername(true);
+      setSsoType('custom');
+      setError(undefined);
+      setRows(undefined);
+    }
+  }, [props.open]);
+
+  const submit = async () => {
+    if (props.ssoUsers.length === 0) return;
+    if (!passwordIsUsername && !ssoPassword) {
+      setError('Provide a shared SSO password, or use password = username.');
+      return;
+    }
+    setSaving(true);
+    setError(undefined);
+    try {
+      const items = props.ssoUsers.map((ssoUser) => ({
+        identity: ssoUser,
+        ssoUser,
+        ssoPassword: passwordIsUsername ? ssoUser : ssoPassword,
+        ssoType,
+      }));
+      const result = await batchCopilotOauthLogin(items);
+      setRows(result.rows);
+      props.notify(`Provision + login: ${result.summary.success} queued, ${result.summary.skipped ?? 0} skipped, ${result.summary.failed} failed.`, result.summary.failed > 0 ? 'error' : 'success');
+      await props.onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog title="Provision proxy accounts + queue login" description={`Creates a proxy account (identity = SSO username) for each of the ${props.ssoUsers.length} selected user(s) and queues a Copilot OAuth login task. Requires each user's SSO password.`} open={props.open} onClose={props.onClose}>
+      <FormGrid>
+        <Label text="Password source">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={passwordIsUsername} onChange={(event) => setPasswordIsUsername(event.target.checked)} />
+            Use password = username for every selected user
+          </label>
+        </Label>
+        {!passwordIsUsername ? (
+          <Label text="Shared SSO password"><Input type="password" value={ssoPassword} onChange={(event) => setSsoPassword(event.target.value)} /></Label>
+        ) : null}
+        <Label text="SSO type">
+          <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" value={ssoType} onChange={(event) => setSsoType(event.target.value as SsoType)}>
+            <option value="custom">Custom</option>
+            <option value="azure">Azure</option>
+          </select>
+        </Label>
+      </FormGrid>
+      {rows ? (
+        <ul className="mt-4 max-h-64 overflow-auto rounded-md bg-slate-50 p-3 text-sm">
+          {rows.map((row) => (
+            <li key={row.identity} className={row.status === 'failed' ? 'text-red-700' : row.status === 'skipped' ? 'text-amber-700' : 'text-slate-700'}>
+              {row.ssoUser} - {row.status} - {row.detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <DialogActions error={error} saving={saving} onCancel={props.onClose} onSubmit={submit} submitLabel={rows ? 'Run again' : `Queue login for ${props.ssoUsers.length} user(s)`} />
     </Dialog>
   );
 }

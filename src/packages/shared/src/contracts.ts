@@ -55,6 +55,47 @@ export interface ImportCopilotOauthTokenRow {
   account?: ProxyAccountDto;
 }
 
+/** One target for batch Copilot OAuth provisioning + login. */
+export interface CopilotOauthBatchLoginItem {
+  /** Proxy account identity — MUST equal the header value future LLM requests will send. */
+  identity: string;
+  ssoUser: string;
+  /** Runtime SSO password; encrypted into the login task, never persisted plaintext or echoed back. */
+  ssoPassword: string;
+  ssoType?: SsoType;
+}
+
+export interface CopilotOauthBatchLoginRequest {
+  items: CopilotOauthBatchLoginItem[];
+}
+
+export type CopilotOauthBatchLoginRowStatus = 'success' | 'skipped' | 'failed';
+
+export type CopilotOauthBatchLoginRowCode =
+  | 'account_created_and_queued'
+  | 'account_existing_and_queued'
+  | 'already_valid'
+  | 'login_in_progress'
+  | 'identity_busy'
+  | 'identity_sso_mismatch'
+  | 'sso_user_missing'
+  | 'emu_sync_failed'
+  | 'gh_login_missing'
+  | 'account_create_failed'
+  | 'login_enqueue_failed';
+
+export interface CopilotOauthBatchLoginRow {
+  identity: string;
+  ssoUser: string;
+  status: CopilotOauthBatchLoginRowStatus;
+  code: CopilotOauthBatchLoginRowCode;
+  detail: string;
+  accountCreated?: boolean;
+  taskId?: string;
+  retryable?: boolean;
+  account?: ProxyAccountDto;
+}
+
 export interface ProxyRequestStatDto {
   id: string;
   identity: string;

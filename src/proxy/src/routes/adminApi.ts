@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { apiError, errorFields, type ImportCopilotOauthTokensRequest } from '@ghcp/shared';
+import { apiError, errorFields, newBatchId, nowIso, type CopilotOauthBatchLoginItem, type CopilotOauthBatchLoginRequest, type CopilotOauthBatchLoginRow, type ImportCopilotOauthTokensRequest, type SsoType } from '@ghcp/shared';
 import { importCopilotOauthTokens } from '../accounts/copilotOauthTokenImport.js';
 import { getAccount, listAccounts, toAccountDto } from '../db/accountsRepo.js';
 import { listRequestStats } from '../db/requestStatsRepo.js';
@@ -8,6 +8,8 @@ import { Logger } from '../logger.js';
 
 export const adminApiRouter = Router();
 const logger = new Logger('admin-api');
+
+const BATCH_LOGIN_MAX_ITEMS = 50;
 
 adminApiRouter.get('/accounts', async (req, res) => {
   const result = await listAccounts({
@@ -75,6 +77,56 @@ adminApiRouter.post('/accounts/:identity/copilot-oauth/reauthorize', async (req,
     res.status(400).json(apiError('copilot_oauth_reauthorize_failed', err instanceof Error ? err.message : String(err)));
   }
 });
+
+adminApiRouter.post('/accounts/copilot-oauth/batch-login', async (req, res) => {
+  const parsed = parseBatchLoginItems((req.body as CopilotOauthBatchLoginRequest | undefined)?.items);
+  if ('error' in parsed) {
+    res.status(400).json(apiError('invalid_batch_login', parsed.error));
+    return;
+  }
+  const startedAt = nowIso();
+  logger.info('batch-login-start', 'Batch Copilot OAuth provisioning + login requested', { total: parsed.items.length });
+  try {
+    const rows = await copilotAuthManager.batchEnsureAndLogin(parsed.items);
+    const summary = summarizeBatchLogin(rows);
+    logger.info('batch-login-done', 'Batch Copilot OAuth provisioning + login completed', { ...summary });
+    res.json({ batchId: newBatchId(), startedAt, finishedAt: nowIso(), summary, rows });
+  } catch (err) {
+    logger.error('batch-login-failed', 'Batch Copilot OAuth provisioning + login failed', { ...errorFields(err) });
+    res.status(400).json(apiError('copilot_oauth_batch_login_failed', err instanceof Error ? err.message : String(err)));
+  }
+});
+
+function parseBatchLoginItems(raw: unknown): { items: CopilotOauthBatchLoginItem[] } | { error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'items must be a non-empty array.' };
+  if (raw.length > BATCH_LOGIN_MAX_ITEMS) return { error: `items exceeds the maximum of ${BATCH_LOGIN_MAX_ITEMS}.` };
+  const items: CopilotOauthBatchLoginItem[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const item = entry as Record<string, unknown>;
+    const identity = typeof item.identity === 'string' ? item.identity.trim() : '';
+    const ssoUser = typeof item.ssoUser === 'string' ? item.ssoUser.trim() : '';
+    const ssoPassword = typeof item.ssoPassword === 'string' ? item.ssoPassword : '';
+    if (!identity || !ssoUser || !ssoPassword) return { error: 'each item requires non-empty identity, ssoUser, and ssoPassword.' };
+    if (seen.has(identity)) return { error: `duplicate identity "${identity}" in batch.` };
+    seen.add(identity);
+    const ssoType: SsoType = item.ssoType === 'azure' ? 'azure' : 'custom';
+    items.push({ identity, ssoUser, ssoPassword, ssoType });
+  }
+  return { items };
+}
+
+function summarizeBatchLogin(rows: CopilotOauthBatchLoginRow[]): { total: number; success: number; skipped: number; failed: number } {
+  let success = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const row of rows) {
+    if (row.status === 'success') success++;
+    else if (row.status === 'skipped') skipped++;
+    else failed++;
+  }
+  return { total: rows.length, success, skipped, failed };
+}
 
 function readLimit(value: unknown): number {
   const raw = Array.isArray(value) ? value[0] : value;

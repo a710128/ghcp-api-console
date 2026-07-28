@@ -1,5 +1,6 @@
-import type { SsoType } from '@ghcp/shared';
-import { createAccount, getAccount, markCopilotOauthStatus } from '../db/accountsRepo.js';
+import type { CopilotOauthBatchLoginItem, CopilotOauthBatchLoginRow, SsoType } from '@ghcp/shared';
+import type { ProxyAccountRecord } from '../db/accountsRepo.js';
+import { createAccount, getAccount, markCopilotOauthStatus, toAccountDto } from '../db/accountsRepo.js';
 import { getGeneralPool, getCoordinationPool } from '../db/connection.js';
 import { ensureSsoUser, syncEmuUser } from '../clients/ssoClient.js';
 import { getDatabaseConfig, withPostgresAdvisoryLock, ADVISORY_NAMESPACES, createOrCoalesceLoginTaskTx } from '@ghcp/database';
@@ -66,16 +67,120 @@ class CopilotAuthManager {
     if (!account.ssoUser) throw new Error(`Identity "${identity}" is missing an SSO user.`);
     if (!account.ghLogin) throw new Error(`Identity "${identity}" is missing a GitHub login.`);
     if (!options.ssoPassword) throw new Error('ssoPassword is required to reauthorize Copilot OAuth.');
+    await this.enqueueOauthRefresh(account, { ssoPassword: options.ssoPassword, ssoType: options.ssoType });
+  }
 
+  async batchEnsureAndLogin(items: CopilotOauthBatchLoginItem[]): Promise<CopilotOauthBatchLoginRow[]> {
+    const rows: CopilotOauthBatchLoginRow[] = new Array(items.length);
+    const CONCURRENCY = 3;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const index = cursor++;
+        if (index >= items.length) return;
+        rows[index] = await this.ensureAndTriggerOauthLogin(items[index]!);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker));
+    return rows;
+  }
+
+  private async ensureAndTriggerOauthLogin(item: CopilotOauthBatchLoginItem): Promise<CopilotOauthBatchLoginRow> {
+    const { identity, ssoUser, ssoPassword, ssoType } = item;
+    const base = { identity, ssoUser };
+    try {
+      const lockResult = await withPostgresAdvisoryLock(
+        getCoordinationPool(),
+        ADVISORY_NAMESPACES.PROXY_INIT,
+        identity,
+        () => this.ensureAndTriggerOauthLoginLocked({ identity, ssoUser, ssoPassword, ssoType: ssoType ?? 'custom' }),
+      );
+      if (!lockResult.lockAcquired) {
+        return { ...base, status: 'skipped', code: 'identity_busy', detail: 'Identity is being initialized by another operation; retry shortly.', retryable: true };
+      }
+      return lockResult.result!;
+    } catch (err) {
+      return { ...base, status: 'failed', code: 'account_create_failed', detail: err instanceof Error ? err.message : String(err), retryable: true };
+    }
+  }
+
+  private async ensureAndTriggerOauthLoginLocked(item: { identity: string; ssoUser: string; ssoPassword: string; ssoType: SsoType }): Promise<CopilotOauthBatchLoginRow> {
+    const { identity, ssoUser, ssoPassword, ssoType } = item;
+    const base = { identity, ssoUser };
+
+    let account = await getAccount(identity);
+    let accountCreated = false;
+
+    if (account) {
+      if (account.ssoUser && account.ssoUser !== ssoUser) {
+        return { ...base, status: 'failed', code: 'identity_sso_mismatch', detail: `Identity "${identity}" is already bound to SSO user "${account.ssoUser}".` };
+      }
+      if (!account.ghLogin) {
+        const synced = await syncEmuUser(account.ssoUser);
+        if (!synced.ghLogin) return { ...base, status: 'failed', code: 'gh_login_missing', detail: `SSO user "${account.ssoUser}" has no GitHub login after EMU sync.`, retryable: true };
+        account = await createAccount({ identity, ssoUser: account.ssoUser, ghLogin: synced.ghLogin });
+      }
+    } else {
+      const provisioned = await this.provisionAccount(identity, ssoUser);
+      if ('code' in provisioned) return { ...base, ...provisioned };
+      account = provisioned.account;
+      accountCreated = true;
+    }
+
+    if (account.copilotOauthStatus === 'valid' && account.copilotOauthToken) {
+      return { ...base, status: 'skipped', code: 'already_valid', detail: 'Copilot OAuth credential is already valid.', accountCreated, account: toAccountDto(account) };
+    }
+
+    const { task, created } = await this.enqueueOauthRefresh(account, { ssoPassword, ssoType });
+    const refreshed = await getAccount(identity);
+    if (!created) {
+      return { ...base, status: 'skipped', code: 'login_in_progress', detail: `A login task is already active for this identity (the supplied password was not applied).`, taskId: task.id, accountCreated, account: refreshed ? toAccountDto(refreshed) : undefined };
+    }
+    return {
+      ...base,
+      status: 'success',
+      code: accountCreated ? 'account_created_and_queued' : 'account_existing_and_queued',
+      detail: accountCreated ? 'Created proxy account and queued login task.' : 'Queued login task for existing account.',
+      taskId: task.id,
+      accountCreated,
+      account: refreshed ? toAccountDto(refreshed) : undefined,
+    };
+  }
+
+  private async provisionAccount(identity: string, preferredSsoUser: string): Promise<{ account: ProxyAccountRecord } | Pick<CopilotOauthBatchLoginRow, 'status' | 'code' | 'detail' | 'retryable'>> {
+    let ensured;
+    try {
+      ensured = await ensureSsoUser({ identity, preferredSsoUser });
+    } catch (err) {
+      return { status: 'failed', code: 'sso_user_missing', detail: err instanceof Error ? err.message : String(err), retryable: true };
+    }
+    if (ensured.user.ssoUser !== preferredSsoUser) {
+      return { status: 'failed', code: 'identity_sso_mismatch', detail: `Identity "${identity}" resolves to SSO user "${ensured.user.ssoUser}", not the requested "${preferredSsoUser}".` };
+    }
+    let synced;
+    try {
+      synced = await syncEmuUser(ensured.user.ssoUser);
+    } catch (err) {
+      return { status: 'failed', code: 'emu_sync_failed', detail: err instanceof Error ? err.message : String(err), retryable: true };
+    }
+    if (!synced.ghLogin) {
+      return { status: 'failed', code: 'gh_login_missing', detail: `SSO user "${ensured.user.ssoUser}" did not return a GitHub login.`, retryable: true };
+    }
+    const account = await createAccount({ identity, ssoUser: ensured.user.ssoUser, ghLogin: synced.ghLogin, copilotOauthStatus: 'missing' });
+    return { account };
+  }
+
+  private async enqueueOauthRefresh(account: ProxyAccountRecord, options: { ssoPassword: string; ssoType?: SsoType }): Promise<{ task: { id: string }; created: boolean }> {
     const loginKey = getDatabaseConfig().loginJobEncryptionKey;
     const pool = getGeneralPool();
-    await createOrCoalesceLoginTaskTx(pool, loginKey, {
-      identity,
+    const result = await createOrCoalesceLoginTaskTx(pool, loginKey, {
+      identity: account.identity,
       ssoUser: account.ssoUser,
       ssoPassword: options.ssoPassword,
-      ghLogin: account.ghLogin,
+      ghLogin: account.ghLogin!,
       ssoType: options.ssoType ?? 'custom',
     });
+    return { task: result.task, created: result.created };
   }
 
   private async initializeIdentity(identity: string): Promise<void> {
