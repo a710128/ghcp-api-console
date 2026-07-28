@@ -28,3 +28,11 @@ function extractApiKey(req: Request): string | undefined {
   if (auth?.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
   return undefined;
 }
+
+/** x-api-key takes precedence over Authorization: Bearer, matching extractApiKey. */
+export function apiKeyStyle(req: Request): 'x-api-key' | 'bearer' | undefined {
+  if (req.header('x-api-key')) return 'x-api-key';
+  const auth = req.header('authorization');
+  if (auth?.toLowerCase().startsWith('bearer ')) return 'bearer';
+  return undefined;
+}

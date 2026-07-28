@@ -25,6 +25,7 @@ import {
   webSearchUnsupportedMessage,
 } from './claudeCodeCompat.js';
 import { resolveClaudeCodeOptimized } from './claudeCodeMode.js';
+import { apiKeyStyle } from '../auth/apiKey.js';
 
 export const compatibleRouter = Router();
 const logger = new Logger('compatible');
@@ -40,14 +41,13 @@ interface UsageStats {
 compatibleRouter.get('/v1/models', async (req, res) => {
   const identity = requireIdentity(req, res);
   if (!identity) return;
-  const claudeCodeOptimized = requireClaudeCodeOptimized(req, res);
-  if (claudeCodeOptimized === undefined) return;
+  const claudeFormat = apiKeyStyle(req) === 'x-api-key';
   try {
     const copilot = await copilotAuthManager.getAuth(identity);
     const models = await listModels(copilot);
-    const visibleModels = claudeCodeOptimized ? models.filter((m) => modelSupportsPath(m, '/v1/messages')) : models;
     recordRequestStat({ identity, path: '/v1/models', success: true });
-    if (claudeCodeOptimized) {
+    if (claudeFormat) {
+      const visibleModels = models.filter((m) => modelSupportsPath(m, '/v1/messages'));
       const data = visibleModels.map(toClaudeCodeModel);
       res.json({
         data,
@@ -57,6 +57,9 @@ compatibleRouter.get('/v1/models', async (req, res) => {
       });
       return;
     }
+    const visibleModels = models.filter(
+      (m) => modelSupportsPath(m, '/chat/completions') || modelSupportsPath(m, '/responses'),
+    );
     res.json({ object: 'list', data: visibleModels.map((m) => ({ object: 'model', owned_by: 'github-copilot', ...m })) });
   } catch (err) {
     recordRequestStat({ identity, path: '/v1/models', success: false, failureReason: errorMessage(err) });
@@ -64,11 +67,11 @@ compatibleRouter.get('/v1/models', async (req, res) => {
   }
 });
 
-compatibleRouter.post('/chat/completions', async (req, res) => {
+compatibleRouter.post('/v1/chat/completions', async (req, res) => {
   await handleForward(req, res, '/chat/completions');
 });
 
-compatibleRouter.post('/responses', async (req, res) => {
+compatibleRouter.post('/v1/responses', async (req, res) => {
   await handleForward(req, res, '/responses');
 });
 
@@ -575,7 +578,7 @@ function sendUnsupportedCompatiblePath(req: Request, res: Response, claudeCodeOp
 }
 
 function supportedPathsMessage(claudeCodeOptimized: boolean): string {
-  const paths = ['GET /v1/models', 'POST /chat/completions', 'POST /v1/messages', 'POST /responses'];
+  const paths = ['GET /v1/models', 'POST /v1/chat/completions', 'POST /v1/messages', 'POST /v1/responses'];
   if (claudeCodeOptimized) paths.splice(3, 0, 'POST /v1/messages/count_tokens');
   return `Supported paths: ${paths.join(', ')}.`;
 }
