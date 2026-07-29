@@ -64,7 +64,7 @@ services:
       DB_POOL_SIZE: "8"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
       BASE_URL: https://${SSO_HOST:?set SSO_HOST}
-      PROXY_BASE_URL: http://proxy:3000
+      PROXY_BASE_URL: http://proxy-lb:3000
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       SSO_EMAIL_DOMAIN: ${SSO_EMAIL_DOMAIN:-customsso.com}
       USER_PREFIX: ${USER_PREFIX:-user}
@@ -115,7 +115,7 @@ services:
       <<: *database-env
       DB_POOL_SIZE: "5"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
-      PROXY_BASE_URL: http://proxy:3000
+      PROXY_BASE_URL: http://proxy-lb:3000
       LOGIN_CONCURRENCY: "1"
       LOGIN_WORKER_CONCURRENCY: "1"
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-Ov23li8tweQw6odWQebz}
@@ -151,7 +151,7 @@ services:
       <<: *database-env
       DB_POOL_SIZE: "3"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
-      PROXY_BASE_URL: http://proxy:3000
+      PROXY_BASE_URL: http://proxy-lb:3000
       LOGIN_WORKER_CONCURRENCY: "1"
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-Ov23li8tweQw6odWQebz}
       GITHUB_OAUTH_SCOPE: ${GITHUB_OAUTH_SCOPE:-read:user}
@@ -178,8 +178,10 @@ services:
       context: .
       dockerfile: src/proxy/Dockerfile
     image: ghcp-proxy:local
-    ports:
-      - "3000:3000"
+    # Replicas are fronted by proxy-lb (no host port here). Safe to scale because
+    # proxy is stateless and account init is serialized by a PostgreSQL advisory lock.
+    deploy:
+      replicas: 2
     environment:
       PORT: "3000"
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -224,6 +226,26 @@ services:
     networks:
       - internal
 
+  proxy-lb:
+    image: nginx:1.27-alpine
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./scripts/proxy-lb.nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      proxy:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/lb-healthz"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
+
   console:
     build:
       context: .
@@ -237,7 +259,7 @@ services:
       ADMINS_FILE: /data/admins.json
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN}
-      PROXY_BASE_URL: http://proxy:3000
+      PROXY_BASE_URL: http://proxy-lb:3000
       SSO_BASE_URL: http://sso:7001
       LOGIN_BASE_URL: http://login:7003
     # labels disabled for 方案 A: console 走宿主机端口 7004 内网直连，不经 Traefik
@@ -249,7 +271,7 @@ services:
     volumes:
       - console-data:/data
     depends_on:
-      proxy:
+      proxy-lb:
         condition: service_healthy
       sso:
         condition: service_healthy
