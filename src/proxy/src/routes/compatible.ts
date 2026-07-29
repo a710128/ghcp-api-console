@@ -4,7 +4,7 @@ import { apiError } from '@ghcp/shared';
 import { recordRequestStat } from '../db/requestStatsRepo.js';
 import { Logger } from '../logger.js';
 import { copilotAuthManager, CopilotAuthNotReadyError } from '../copilot/copilotAuthManager.js';
-import { invalidateCopilotOauthToken } from '../db/accountsRepo.js';
+import { getAccount, invalidateCopilotOauthToken } from '../db/accountsRepo.js';
 import {
   assertModelSupportsPath,
   clearModelsCache,
@@ -201,23 +201,77 @@ async function forwardWithRetry(
     await assertModelSupportsPath(copilot, path, model);
   } catch (err) {
     if (err instanceof CopilotApiError && err.status === 401) {
-      await invalidateOnUnauthorized(copilot.identity, copilot.credentialVersion);
+      // err.message already embeds the upstream /models 401 status + body.
+      await maybeInvalidateOnUnauthorized(copilot.identity, copilot.credentialVersion, { path, upstreamDetail: errorMessage(err) });
     }
     throw err;
   }
   const upstream = await forwardCopilotRequest(copilot, path, body, options);
   if (upstream.status === 401) {
-    await invalidateOnUnauthorized(copilot.identity, copilot.credentialVersion);
+    const upstreamDetail = await readUpstream401Body(upstream);
+    await maybeInvalidateOnUnauthorized(copilot.identity, copilot.credentialVersion, { path, upstreamDetail });
   }
   return upstream;
 }
 
-async function invalidateOnUnauthorized(identity: string, credentialVersion: bigint): Promise<void> {
-  const invalidated = await invalidateCopilotOauthToken(identity, credentialVersion, 'expired');
-  if (invalidated) {
-    clearModelsCache(identity);
-    logger.warn('oauth-invalidated', 'Copilot OAuth token invalidated after upstream 401', { identity });
+/**
+ * A Copilot /responses 401 whose body reports a connection-scoped item id mismatch is a
+ * stateful-session error, not an auth failure: the OAuth token is still valid. Invalidating it
+ * would wrongly expire a working credential, so these are passed through to the caller untouched.
+ */
+function isSessionScopedUnauthorized(upstreamDetail: string | undefined): boolean {
+  if (!upstreamDetail) return false;
+  return /does not belong to this connection/i.test(upstreamDetail);
+}
+
+/** Read a cloned copy of the 401 body so the original response stream stays intact for pipeAndRecord. */
+async function readUpstream401Body(upstream: globalThis.Response): Promise<string | undefined> {
+  try {
+    return await upstream.clone().text();
+  } catch {
+    return undefined;
   }
+}
+
+const OAUTH_INVALIDATE_DETAIL_MAX_CHARS = 500;
+
+async function maybeInvalidateOnUnauthorized(
+  identity: string,
+  credentialVersion: bigint,
+  detail: { path: CopilotApiPath; upstreamDetail?: string },
+): Promise<void> {
+  if (isSessionScopedUnauthorized(detail.upstreamDetail)) {
+    logger.warn('oauth-401-session-scoped', 'Upstream 401 is a stateful-session error; OAuth token left intact', {
+      identity,
+      path: detail.path,
+      upstreamDetail: truncateDetail(detail.upstreamDetail),
+    });
+    return;
+  }
+  const priorOauthUpdatedAt = (await getAccount(identity))?.copilotOauthUpdatedAt;
+  const invalidated = await invalidateCopilotOauthToken(identity, credentialVersion, 'expired');
+  if (!invalidated) return;
+  clearModelsCache(identity);
+  logger.warn('oauth-invalidated', 'Copilot OAuth token invalidated after upstream 401', {
+    identity,
+    path: detail.path,
+    oauthAgeSeconds: tokenAgeSeconds(priorOauthUpdatedAt),
+    upstreamDetail: truncateDetail(detail.upstreamDetail),
+  });
+}
+
+function tokenAgeSeconds(oauthUpdatedAt: string | undefined): number | undefined {
+  if (!oauthUpdatedAt) return undefined;
+  const updatedAt = Date.parse(oauthUpdatedAt);
+  if (Number.isNaN(updatedAt)) return undefined;
+  return Math.max(0, Math.round((Date.now() - updatedAt) / 1000));
+}
+
+function truncateDetail(detail: string | undefined): string | undefined {
+  if (!detail) return undefined;
+  const collapsed = detail.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= OAUTH_INVALIDATE_DETAIL_MAX_CHARS) return collapsed;
+  return `${collapsed.slice(0, OAUTH_INVALIDATE_DETAIL_MAX_CHARS)}…(${collapsed.length} chars)`;
 }
 
 async function pipeAndRecord(
