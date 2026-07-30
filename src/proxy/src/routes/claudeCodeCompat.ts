@@ -358,6 +358,9 @@ function mergeToolResultTextBlocks(body: Record<string, unknown>): void {
     const targetIndex = findLastIndex(rebuilt, (block) => recordField(block)?.type === 'tool_result');
     const target = recordField(rebuilt[targetIndex]);
     if (!target) continue;
+    // Copilot upstream rejects a tool_result whose content mixes tool_reference
+    // (advanced-tool-use/ToolSearch) with text blocks, so leave those untouched.
+    if (containsContentBlockType(target.content, 'tool_reference')) continue;
     appendTextToToolResult(target, textParts.join('\n\n'));
     object.content = rebuilt;
   }
