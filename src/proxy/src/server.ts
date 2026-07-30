@@ -62,7 +62,7 @@ export function buildApp(): express.Express {
 }
 
 function supportedPathsMessage(claudeCodeOptimized: boolean): string {
-  const paths = ['GET /v1/models', 'POST /v1/chat/completions', 'POST /v1/messages', 'POST /v1/responses'];
+  const paths = ['GET /v1/models', 'POST /v1/chat/completions', 'POST /v1/messages', 'POST /v1/responses', 'POST /v1/responses/compact'];
   if (claudeCodeOptimized) paths.splice(3, 0, 'POST /v1/messages/count_tokens');
   return `Supported paths: ${paths.join(', ')}.`;
 }

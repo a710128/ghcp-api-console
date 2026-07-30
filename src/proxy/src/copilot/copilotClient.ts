@@ -4,7 +4,7 @@ import { Logger } from '../logger.js';
 import type { CopilotAuthContext } from './copilotAuth.js';
 
 export const COPILOT_API_PATHS = ['/chat/completions', '/v1/messages', '/responses'] as const;
-export const COPILOT_FORWARD_PATHS = ['/chat/completions', '/v1/messages', '/v1/messages/count_tokens', '/responses'] as const;
+export const COPILOT_FORWARD_PATHS = ['/chat/completions', '/v1/messages', '/v1/messages/count_tokens', '/responses', '/responses/compact'] as const;
 export type CopilotApiPath = (typeof COPILOT_FORWARD_PATHS)[number];
 type ModelsCacheKey = string;
 
@@ -309,7 +309,9 @@ function inferSupportedPaths(model: ModelInfo): CopilotApiPath[] {
 }
 
 function modelCapabilityPath(path: CopilotApiPath): CopilotApiPath {
-  return path === '/v1/messages/count_tokens' ? '/v1/messages' : path;
+  if (path === '/v1/messages/count_tokens') return '/v1/messages';
+  if (path === '/responses/compact') return '/responses';
+  return path;
 }
 
 function capabilityType(model: ModelInfo): string | undefined {

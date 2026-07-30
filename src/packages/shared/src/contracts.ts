@@ -101,7 +101,7 @@ export interface ProxyRequestStatDto {
   identity: string;
   ghLogin?: string;
   requestedAt: string;
-  path: '/chat/completions' | '/v1/messages' | '/v1/messages/count_tokens' | '/responses' | '/v1/models';
+  path: '/chat/completions' | '/v1/messages' | '/v1/messages/count_tokens' | '/responses' | '/responses/compact' | '/v1/models';
   model?: string;
   success: boolean;
   failureReason?: string;
