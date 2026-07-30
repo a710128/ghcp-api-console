@@ -337,20 +337,30 @@ async function pipeAndRecord(
   const usage: UsageStats = {};
   const decoder = new TextDecoder();
   let sseBuffer = '';
-  const filterCopilotDone = options.claudeCodeOptimized && contentType.includes('text/event-stream');
+  const isEventStream = contentType.includes('text/event-stream');
+  const filterCopilotDone = options.claudeCodeOptimized && isEventStream;
+  // GHCP /responses rotates item_id per SSE event, breaking @ai-sdk/openai's parser; normalize to
+  // each output_index's first-seen id so downstream keys stay stable. See proxy-update.md.
+  const rectifier = isEventStream && isResponsesPath(stat.path) ? new ItemIdRectifier() : undefined;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (filterCopilotDone) {
-        sseBuffer = forwardSseEvents(sseBuffer + decoder.decode(value, { stream: true }), res, usage);
+      const chunk = decoder.decode(value, { stream: true });
+      if (rectifier) {
+        sseBuffer = rectifySseEvents(sseBuffer + chunk, res, usage, rectifier);
+      } else if (filterCopilotDone) {
+        sseBuffer = forwardSseEvents(sseBuffer + chunk, res, usage);
       } else {
-        sseBuffer = collectSseUsage(sseBuffer + decoder.decode(value, { stream: true }), usage);
+        sseBuffer = collectSseUsage(sseBuffer + chunk, usage);
         res.write(value);
       }
     }
     const remaining = decoder.decode();
-    if (filterCopilotDone) {
+    if (rectifier) {
+      if (remaining) sseBuffer = rectifySseEvents(sseBuffer + remaining, res, usage, rectifier);
+      flushRectifiedRemainder(sseBuffer, res, usage, rectifier);
+    } else if (filterCopilotDone) {
       if (remaining) sseBuffer = forwardSseEvents(sseBuffer + remaining, res, usage);
       flushSseRemainder(sseBuffer, res, usage);
     } else {
@@ -439,6 +449,108 @@ function flushSseRemainder(buffer: string, res: Response, usage: UsageStats): vo
   collectSseEventUsage(buffer, usage);
   if (!isCopilotDoneEvent(buffer)) res.write(buffer);
 }
+
+const RESPONSES_PATHS: ReadonlySet<CopilotApiPath> = new Set(['/responses', '/responses/compact']);
+
+function isResponsesPath(path: CopilotApiPath): boolean {
+  return RESPONSES_PATHS.has(path);
+}
+
+export class ItemIdRectifier {
+  private readonly canonical = new Map<number, string>();
+
+  rewrite(data: Record<string, unknown>): boolean {
+    const outputIndex = data.output_index;
+    if (typeof outputIndex !== 'number') return false;
+    const current = currentItemId(data);
+    if (current === undefined) return false;
+    const existing = this.canonical.get(outputIndex);
+    if (existing === undefined) {
+      this.canonical.set(outputIndex, current);
+      return false;
+    }
+    if (existing === current) return false;
+    applyItemId(data, existing);
+    return true;
+  }
+
+  reset(): void {
+    this.canonical.clear();
+  }
+}
+
+function currentItemId(data: Record<string, unknown>): string | undefined {
+  const item = recordField(data.item);
+  if (item && typeof item.id === 'string') return item.id;
+  return typeof data.item_id === 'string' ? data.item_id : undefined;
+}
+
+function applyItemId(data: Record<string, unknown>, canonicalId: string): void {
+  const item = recordField(data.item);
+  if (item && typeof item.id === 'string') item.id = canonicalId;
+  if (typeof data.item_id === 'string') data.item_id = canonicalId;
+}
+
+function rectifySseEvents(buffer: string, res: Response, usage: UsageStats, rectifier: ItemIdRectifier): string {
+  let remaining = buffer;
+  for (;;) {
+    const boundary = nextSseEventBoundary(remaining);
+    if (!boundary) return remaining;
+    const separator = remaining.slice(boundary.eventEnd, boundary.nextEventStart);
+    rectifyAndWriteEvent(remaining.slice(0, boundary.eventEnd), separator, res, usage, rectifier);
+    remaining = remaining.slice(boundary.nextEventStart);
+  }
+}
+
+function flushRectifiedRemainder(buffer: string, res: Response, usage: UsageStats, rectifier: ItemIdRectifier): void {
+  if (!buffer) return;
+  rectifyAndWriteEvent(buffer, '', res, usage, rectifier);
+}
+
+function rectifyAndWriteEvent(
+  eventText: string,
+  separator: string,
+  res: Response,
+  usage: UsageStats,
+  rectifier: ItemIdRectifier,
+): void {
+  collectSseEventUsage(eventText, usage);
+  const rewritten = rewriteEventText(eventText, rectifier);
+  res.write(rewritten + separator);
+  if (sseEventName(eventText) === 'response.completed') rectifier.reset();
+}
+
+export function rewriteEventText(eventText: string, rectifier: ItemIdRectifier): string {
+  const data = sseData(eventText);
+  if (!data || data === '[DONE]') return eventText;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return eventText;
+  }
+  const object = recordField(parsed);
+  if (!object || !rectifier.rewrite(object)) return eventText;
+  return replaceEventData(eventText, JSON.stringify(object));
+}
+
+function replaceEventData(eventText: string, newData: string): string {
+  const newline = eventText.includes('\r\n') ? '\r\n' : '\n';
+  const outLines: string[] = [];
+  let dataWritten = false;
+  for (const line of eventText.split(/\r?\n/)) {
+    if (line.startsWith('data:')) {
+      if (!dataWritten) {
+        outLines.push(`data: ${newData}`);
+        dataWritten = true;
+      }
+      continue;
+    }
+    outLines.push(line);
+  }
+  return outLines.join(newline);
+}
+
 
 function nextSseEventBoundary(buffer: string): { eventEnd: number; nextEventStart: number } | undefined {
   const lf = buffer.indexOf('\n\n');
