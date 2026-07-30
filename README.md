@@ -196,6 +196,19 @@ curl http://localhost:3000/v1/responses \
   }'
 ```
 
+或者调用 Responses Compact 形状接口（会话压缩）：
+
+```bash
+curl http://localhost:3000/v1/responses/compact \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "X-User-Identity: alice" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5",
+    "input": "用一句话说明 GitHub Copilot 的用途。"
+  }'
+```
+
 `model` 需要替换为支持目标 API path 的模型。`GET /v1/models` 现在按认证 header 类型返回不同结果：使用 `Authorization: Bearer` 时返回 OpenAI 风格模型列表，只包含支持 `/v1/responses` 的模型；使用 `x-api-key` 时返回 Anthropic/Claude 风格模型列表，只包含支持 `/v1/messages` 的模型，并保持 Copilot 原始模型名，例如 `claude-opus-4.8`。`/v1/responses` 示例中的 `gpt-5` 需要替换为账号可用且支持 `/v1/responses` 的 Copilot 模型。如果你在 `.env` 里改了 `IDENTITY_HEADER`，示例里的 `X-User-Identity` 也要同步替换。
 
 Claude Code 可以通过 settings 文件接入本地 proxy，例如 `~/.claude/settings.json` ：

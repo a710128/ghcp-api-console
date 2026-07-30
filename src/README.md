@@ -170,6 +170,7 @@ curl http://localhost:8002/healthz
 | `GET` | `/v1/models` | 按认证 header 区分：`Authorization: Bearer` 返回 OpenAI 风格列表，只含支持 `/v1/responses` 的模型；`x-api-key` 返回 Anthropic/Claude 风格列表，只含支持 `/v1/messages` 的模型，保持 Copilot 原始模型名。 |
 | `POST` | `/v1/chat/completions` | 转发 OpenAI Chat Completions 形状请求。 |
 | `POST` | `/v1/responses` | 转发 OpenAI Responses 形状请求。 |
+| `POST` | `/v1/responses/compact` | 转发 OpenAI Responses Compact 形状请求（会话压缩）。 |
 | `POST` | `/v1/messages` | 转发 Anthropic Messages 形状请求。 |
 | `POST` | `/v1/messages/count_tokens` | 仅请求解析为 Claude Code 优化模式时提供；必要时本地估算 token。 |
 

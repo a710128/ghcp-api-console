@@ -6,7 +6,7 @@
 
 Proxy 位于客户端与 GitHub Copilot 后端之间，负责：
 
-- 对外提供 Copilot 兼容 API：`/v1/chat/completions`、`/v1/messages`、`/v1/responses`、`/v1/models`。
+- 对外提供 Copilot 兼容 API：`/v1/chat/completions`、`/v1/messages`、`/v1/responses`、`/v1/responses/compact`、`/v1/models`。
 - 用本地 API Key 保护公共代理接口，用内部 Token 保护管理/服务间接口。
 - 按用户身份（默认请求头 `X-User-Identity`）维护账号、Token 状态和请求统计。
 - 分别连接 SSO 服务与 Login 服务：未知身份会触发 SSO 用户确保、EMU 同步，并由 Proxy 创建 Login 任务；手动刷新 GitHub Token 也会创建 Login 任务。
@@ -141,6 +141,7 @@ X-Internal-Token: <INTERNAL_API_TOKEN>
 | `GET` | `/v1/models` | API Key + identity | 无 | 按认证 header 区分：使用 `Authorization: Bearer` 返回 OpenAI/Copilot 风格 `{ object: "list", data: [...] }`，只含支持 `/responses` 的模型；使用 `x-api-key` 返回 Anthropic 风格 `{ data: [{ type: "model", id, display_name, max_input_tokens, max_tokens }], has_more, first_id, last_id }`，只含支持 `/v1/messages` 的模型；两种模式下 `id` 均保持 Copilot 原始模型名。 |
 | `POST` | `/v1/chat/completions` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Chat Completions 形状 | 直接返回 Copilot 上游状态、`content-type` 和 body；支持 SSE。 |
 | `POST` | `/v1/responses` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Responses 形状 | 同上。 |
+| `POST` | `/v1/responses/compact` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持上游 Responses Compact 形状 | 同上。 |
 | `POST` | `/v1/messages` | API Key + identity | JSON 对象，必须含 `model: string`；其余字段保持 Anthropic Messages 形状 | 同上；优化模式会做 Claude Code 兼容预处理。 |
 | `POST` | `/v1/messages/count_tokens` | API Key + identity | 仅当前请求解析为优化模式时可用；JSON 对象，必须含 `model: string` | 优先转发到上游；若上游返回 404/405/501，则本地估算并返回 `{ input_tokens: number }`。 |
 | 任意 | `/v1/files*` | API Key + identity | 当前未提供 Files API | 优化模式下返回 Anthropic 风格 `not_supported`；非优化模式走统一 404。 |
