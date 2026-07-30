@@ -181,8 +181,14 @@ services:
     # SIGTERM -> 1s drain + up to 120s in-flight/SSE drain + closePool before exit.
     # Must exceed that or Docker SIGKILLs mid-drain (default grace is only 10s).
     stop_grace_period: 130s
+    # Auto-restart on crash / host reboot / docker daemon restart. Does NOT restart
+    # containers stopped on purpose (docker compose stop/down).
+    restart: unless-stopped
     # Replicas are fronted by proxy-lb (no host port here). Safe to scale because
     # proxy is stateless and account init is serialized by a PostgreSQL advisory lock.
+    # Zero-downtime rolling updates are done via scripts/rollout-proxy.sh, NOT plain
+    # `compose up` (which recreates all replicas at once). deploy.update_config is a
+    # Swarm-only field ignored by `docker compose up`, so it is intentionally absent.
     deploy:
       replicas: 2
     environment:
