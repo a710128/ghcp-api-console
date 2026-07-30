@@ -1,6 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import { config } from './config.js';
-import { initPool, getGeneralPool } from './db/connection.js';
+import { initPool, getGeneralPool, closePool } from './db/connection.js';
 import { requireApiKey } from './auth/apiKey.js';
 import { requireIdentityHeader } from './auth/identityHeader.js';
 import { requireInternalToken } from './auth/internalAuth.js';
@@ -11,6 +11,7 @@ import { internalApiRouter } from './routes/internalApi.js';
 
 let activeRequests = 0;
 let isReady = false;
+let isShuttingDown = false;
 
 export function buildApp(): express.Express {
   const app = express();
@@ -82,14 +83,33 @@ export async function startServer(): Promise<void> {
   });
 
   const shutdown = async (signal: string): Promise<void> => {
+    // Second signal (SIGINT after SIGTERM) must not re-run: server.close()
+    // throws and closePool() double-ends the pools.
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     console.log(JSON.stringify({ time: new Date().toISOString(), event: 'shutdown', service: 'proxy', signal }));
+
+    // Drain buffer: nginx uses passive health checks, so new connections after
+    // server.close() get refused and retried on a healthy replica. The 1s beat
+    // lets already-accepted-but-uncounted requests register first.
     isReady = false;
+    await new Promise((r) => setTimeout(r, 1_000));
+
     server.close();
-    const deadline = Date.now() + 30_000;
+    server.closeIdleConnections();
+
+    const deadline = Date.now() + 120_000;
     while (activeRequests > 0 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 100));
     }
-    process.exit(activeRequests > 0 ? 1 : 0);
+    const drained = activeRequests === 0;
+    if (!drained) server.closeAllConnections();
+
+    await closePool().catch((err) => {
+      console.error(JSON.stringify({ time: new Date().toISOString(), event: 'shutdown-closepool-failed', service: 'proxy', error: (err as Error).message }));
+    });
+
+    process.exit(drained ? 0 : 1);
   };
 
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

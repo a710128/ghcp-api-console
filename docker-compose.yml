@@ -178,6 +178,9 @@ services:
       context: .
       dockerfile: src/proxy/Dockerfile
     image: ghcp-proxy:local
+    # SIGTERM -> 1s drain + up to 120s in-flight/SSE drain + closePool before exit.
+    # Must exceed that or Docker SIGKILLs mid-drain (default grace is only 10s).
+    stop_grace_period: 130s
     # Replicas are fronted by proxy-lb (no host port here). Safe to scale because
     # proxy is stateless and account init is serialized by a PostgreSQL advisory lock.
     deploy:
