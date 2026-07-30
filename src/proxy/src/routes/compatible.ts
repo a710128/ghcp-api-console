@@ -210,6 +210,10 @@ async function forwardWithRetry(
   if (upstream.status === 401) {
     const upstreamDetail = await readUpstream401Body(upstream);
     await maybeInvalidateOnUnauthorized(copilot.identity, copilot.credentialVersion, { path, upstreamDetail });
+    if (isSessionScopedUnauthorized(upstreamDetail)) {
+      // Rewrite this stateful-session 401 to 400 (client request problem, not auth failure), passing the upstream body/headers through.
+      return new Response(upstream.body, { status: 400, statusText: 'Bad Request', headers: upstream.headers });
+    }
   }
   return upstream;
 }
